@@ -7,14 +7,13 @@
 #[cfg(any(not(target_os = "windows"), test))]
 use gpui::{Bounds, Pixels, Point, Size, point};
 use gpui::{
-    Context, Hsla, InteractiveElement, IntoElement, ParentElement, Render, SharedString,
-    StatefulInteractiveElement as _, Styled, Window, WindowBackgroundAppearance, WindowKind,
-    WindowOptions, div, img, prelude::FluentBuilder as _, px, svg,
+    Context, Div, FontWeight, Hsla, InteractiveElement, IntoElement, ParentElement, Render,
+    SharedString, StatefulInteractiveElement as _, Styled, Window, WindowBackgroundAppearance,
+    WindowKind, WindowOptions, div, hsla, img, prelude::FluentBuilder as _, px, rgb, svg,
 };
 use openlogi_core::binding::{Action, ActionRingSlot};
 use openlogi_ipc::ActionRingInvocation;
 use openlogi_ui::action_icons::RING_CANCEL_ICON;
-use openlogi_ui::color;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -22,11 +21,34 @@ use tokio::sync::mpsc;
 use crate::ipc::OverlayCommand;
 use crate::session::{ClickAwaySession, ShowingRing};
 
-pub(crate) const WINDOW_SIZE: f32 = 360.0;
-pub(crate) const SLOT_SIZE: f32 = 54.0;
-pub(crate) const RADIUS: f32 = 122.0;
+/// The ring is drawn as a three-by-three keypad: the eight positions sit
+/// around the centre cell (cancel, where the cursor lands) one gap away, so the
+/// travel from the cursor to any action is a single cell.
+const CELL: f32 = 48.0;
+const GAP: f32 = 8.0;
+const GRID: f32 = 3.0 * CELL + 2.0 * GAP;
+/// Sheet padding around the keypad, and the ruled readout row under it.
+const PAD: f32 = 10.0;
+const READOUT: f32 = 28.0;
+/// Room for the floating shadow between the sheet and the window edge.
+const MARGIN: f32 = 18.0;
+/// The window is square and centred on the cursor, so it is sized by the
+/// sheet's longest reach from the keypad centre: down through the readout.
+pub(crate) const WINDOW_SIZE: f32 = 2.0 * (GRID / 2.0 + PAD + 1.0 + READOUT + MARGIN);
+const CENTER: f32 = WINDOW_SIZE / 2.0;
+const SHEET_LEFT: f32 = CENTER - GRID / 2.0 - PAD;
+const SHEET_TOP: f32 = CENTER - GRID / 2.0 - PAD;
+const SHEET_WIDTH: f32 = GRID + 2.0 * PAD;
+const SHEET_HEIGHT: f32 = GRID + 2.0 * PAD + 1.0 + READOUT;
+const GLYPH_SIZE: f32 = 22.0;
 /// Edge of the square box a user-supplied slot image is fitted into.
 const CUSTOM_ICON_SIZE: f32 = 32.0;
+/// Hover brackets: four L marks outside the cell's corners.
+const BRACKET_GAP: f32 = 2.5;
+const BRACKET_ARM: f32 = 8.0;
+const BRACKET_STROKE: f32 = 1.5;
+const MONO: &str = "JetBrains Mono";
+const READOUT_TEXT: f32 = 10.5;
 
 /// A user-supplied image for a slot with a custom label, drawn in full colour
 /// in place of the built-in glyph: `<config dir>/ring-icons/<label>.svg` or
@@ -47,36 +69,105 @@ fn custom_icon_path(presentation: &openlogi_ipc::ActionRingPresentation) -> Opti
         .find(|candidate| candidate.is_file())
 }
 
-/// The ring's own neutral scale. It floats over whatever is on the desktop, so
-/// unlike the settings app it cannot take its surfaces from the OS appearance —
-/// it commits to a dark panel and rides its own contrast. Only the accent is
-/// shared (`openlogi_ui::color`); these greys are local by nature.
-const PANEL: Hsla = neutral(0.06, 0.82);
-const SLOT_RESTING: Hsla = neutral(0.16, 0.98);
-const CANCEL_RESTING: Hsla = neutral(0.20, 0.98);
-const GLYPH: Hsla = neutral(0.98, 1.0);
-const LABEL: Hsla = neutral(0.94, 1.0);
-const CANCEL_GLYPH: Hsla = neutral(0.82, 1.0);
+/// Datasheet Mono, dark: square solid surfaces, 1 px rules, one orange. The ring
+/// floats over whatever is on the desktop, so it commits to the dark sheet
+/// rather than following the OS appearance.
+fn surface() -> Hsla {
+    rgb(0x0011_1214).into()
+}
+fn chip() -> Hsla {
+    rgb(0x001A_1B1F).into()
+}
+fn edge() -> Hsla {
+    rgb(0x002C_2E33).into()
+}
+fn accent() -> Hsla {
+    rgb(0x00FF_4F1F).into()
+}
+fn text() -> Hsla {
+    hsla(0.0, 0.0, 1.0, 0.92)
+}
+fn text_2() -> Hsla {
+    hsla(0.0, 0.0, 1.0, 0.58)
+}
+fn text_dim() -> Hsla {
+    hsla(0.0, 0.0, 1.0, 0.46)
+}
+fn bracket_ink() -> Hsla {
+    hsla(0.0, 0.0, 1.0, 0.78)
+}
 
-const fn neutral(lightness: f32, alpha: f32) -> Hsla {
-    Hsla {
-        h: 0.0,
-        s: 0.0,
-        l: lightness,
-        a: alpha,
+/// Keypad column and row of a ring position, each in `-1..=1`.
+const fn grid_position(slot: ActionRingSlot) -> (f32, f32) {
+    match slot {
+        ActionRingSlot::Top => (0.0, -1.0),
+        ActionRingSlot::TopRight => (1.0, -1.0),
+        ActionRingSlot::Right => (1.0, 0.0),
+        ActionRingSlot::BottomRight => (1.0, 1.0),
+        ActionRingSlot::Bottom => (0.0, 1.0),
+        ActionRingSlot::BottomLeft => (-1.0, 1.0),
+        ActionRingSlot::Left => (-1.0, 0.0),
+        ActionRingSlot::TopLeft => (-1.0, -1.0),
     }
 }
 
-/// The accent deepened for the dark panel: the brand lightness sits too close to
-/// the white glyph a selected slot carries, so the fill drops to `0.48` and the
-/// ring around it rises to `0.78`. Both keep the brand hue and saturation.
-const SELECTED_FILL_L: f32 = 0.48;
-const SELECTED_BORDER_L: f32 = 0.78;
+/// Top-left corner of a cell in window coordinates.
+fn cell_origin(column: f32, row: f32) -> (f32, f32) {
+    (
+        CENTER - CELL / 2.0 + column * (CELL + GAP),
+        CENTER - CELL / 2.0 + row * (CELL + GAP),
+    )
+}
+
+/// Compass code shown in the readout for a hovered position.
+const fn compass(slot: ActionRingSlot) -> &'static str {
+    match slot {
+        ActionRingSlot::Top => "N",
+        ActionRingSlot::TopRight => "NE",
+        ActionRingSlot::Right => "E",
+        ActionRingSlot::BottomRight => "SE",
+        ActionRingSlot::Bottom => "S",
+        ActionRingSlot::BottomLeft => "SW",
+        ActionRingSlot::Left => "W",
+        ActionRingSlot::TopLeft => "NW",
+    }
+}
+
+/// Four L marks drawn outside a cell's corners. Pure paint: no handlers, so
+/// they never change layout or hit testing.
+fn brackets(left: f32, top: f32) -> Vec<Div> {
+    let near = BRACKET_GAP + BRACKET_STROKE;
+    let (x0, y0) = (left - near, top - near);
+    let (x1, y1) = (left + CELL + BRACKET_GAP, top + CELL + BRACKET_GAP);
+    let (x1_arm, y1_arm) = (x1 + BRACKET_STROKE - BRACKET_ARM, y1 + BRACKET_STROKE - BRACKET_ARM);
+    let bar = |x: f32, y: f32, w: f32, h: f32| {
+        div()
+            .absolute()
+            .left(px(x))
+            .top(px(y))
+            .w(px(w))
+            .h(px(h))
+            .bg(bracket_ink())
+    };
+    let (arm, stroke) = (BRACKET_ARM, BRACKET_STROKE);
+    vec![
+        bar(x0, y0, arm, stroke),
+        bar(x0, y0, stroke, arm),
+        bar(x1_arm, y0, arm, stroke),
+        bar(x1, y0, stroke, arm),
+        bar(x0, y1, arm, stroke),
+        bar(x0, y1_arm, stroke, arm),
+        bar(x1_arm, y1, arm, stroke),
+        bar(x1, y1_arm, stroke, arm),
+    ]
+}
 
 pub(crate) struct RingView {
     invocation: ActionRingInvocation,
     commands: mpsc::UnboundedSender<OverlayCommand>,
     hovered: Option<ActionRingSlot>,
+    /// Pointer over the centre (cancel) cell; drives the readout only.
+    cancel_hovered: bool,
     /// Publishes click-away identity for exactly this view's lifetime.
     _showing: ShowingRing,
 }
@@ -93,8 +184,23 @@ impl RingView {
             invocation,
             commands,
             hovered: None,
+            cancel_hovered: false,
             _showing: showing,
         }
+    }
+
+    /// Preview builds only: draw `slot` as hovered without a pointer.
+    #[cfg(feature = "ring-preview")]
+    pub(crate) fn preview_hovered(mut self, slot: Option<ActionRingSlot>) -> Self {
+        self.hovered = slot;
+        self
+    }
+
+    /// Preview builds only: draw the centre cell as hovered.
+    #[cfg(feature = "ring-preview")]
+    pub(crate) fn preview_cancel_hovered(mut self) -> Self {
+        self.cancel_hovered = true;
+        self
     }
 
     /// The ring session this view is showing.
@@ -110,67 +216,124 @@ impl RingView {
         });
     }
 
-    fn slot_element(
-        &self,
-        slot: ActionRingSlot,
-        cx: &mut Context<Self>,
-    ) -> Option<gpui::AnyElement> {
-        let presentation = self.invocation.slots.get(&slot)?;
-        let icon_path = presentation.icon.asset_path();
-        let selected = self.hovered == Some(slot);
-        let (left, top) = slot.placement(WINDOW_SIZE, RADIUS, SLOT_SIZE);
+    fn slot_element(&self, slot: ActionRingSlot, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let (column, row) = grid_position(slot);
+        let (left, top) = cell_origin(column, row);
+        let cell = div()
+            .id(("ring-slot", slot.index()))
+            .absolute()
+            .left(px(left))
+            .top(px(top))
+            .size(px(CELL))
+            .flex()
+            .items_center()
+            .justify_center();
+        // An empty position keeps its cell as an outline, so the keypad never
+        // changes shape between rings.
+        let Some(presentation) = self.invocation.slots.get(&slot) else {
+            return cell.border_1().border_color(edge()).into_any_element();
+        };
         let session_id = self.invocation.session_id;
         let activate = self.commands.clone();
-        Some(
-            div()
-                .id(("ring-slot", slot.index()))
-                .absolute()
-                .left(px(left))
-                .top(px(top))
-                .size(px(SLOT_SIZE))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded_full()
-                .bg(if selected {
-                    color::accent_at_lightness(SELECTED_FILL_L)
-                } else {
-                    SLOT_RESTING
-                })
-                .when(selected, |slot| {
-                    slot.border_2()
-                        .border_color(color::accent_at_lightness(SELECTED_BORDER_L))
-                })
-                .shadow_md()
-                .text_color(GLYPH)
-                .cursor_pointer()
-                .child(match custom_icon_path(presentation) {
-                    Some(path) => img(path).size(px(CUSTOM_ICON_SIZE)).into_any_element(),
-                    None => svg()
-                        .path(icon_path)
-                        .size(px(22.0))
-                        .text_color(GLYPH)
-                        .into_any_element(),
-                })
-                .on_hover(cx.listener(move |this, hovered, _, cx| {
-                    if *hovered && this.hovered != Some(slot) {
-                        this.hovered = Some(slot);
-                        let _ = this
-                            .commands
-                            .send(OverlayCommand::Hover { session_id, slot });
-                        cx.notify();
-                    } else if !*hovered && this.hovered == Some(slot) {
-                        this.hovered = None;
-                        cx.notify();
-                    }
-                }))
-                .on_click(move |_, window, cx| {
-                    cx.stop_propagation();
-                    let _ = activate.send(OverlayCommand::Activate { session_id, slot });
-                    window.remove_window();
-                })
-                .into_any_element(),
-        )
+        cell.bg(chip())
+            .text_color(text())
+            .cursor_pointer()
+            .child(match custom_icon_path(presentation) {
+                Some(path) => img(path).size(px(CUSTOM_ICON_SIZE)).into_any_element(),
+                None => svg()
+                    .path(presentation.icon.asset_path())
+                    .size(px(GLYPH_SIZE))
+                    .text_color(text())
+                    .into_any_element(),
+            })
+            .on_hover(cx.listener(move |this, hovered, _, cx| {
+                if *hovered && this.hovered != Some(slot) {
+                    this.hovered = Some(slot);
+                    let _ = this
+                        .commands
+                        .send(OverlayCommand::Hover { session_id, slot });
+                    cx.notify();
+                } else if !*hovered && this.hovered == Some(slot) {
+                    this.hovered = None;
+                    cx.notify();
+                }
+            }))
+            .on_click(move |_, window, cx| {
+                cx.stop_propagation();
+                let _ = activate.send(OverlayCommand::Activate { session_id, slot });
+                window.remove_window();
+            })
+            .into_any_element()
+    }
+
+    /// The label for a populated slot, localized unless user-authored.
+    fn slot_label(&self, slot: ActionRingSlot) -> Option<String> {
+        let presentation = self.invocation.slots.get(&slot)?;
+        // User-authored labels render verbatim: passing them through the
+        // localization table would translate any label that happens to
+        // collide with a known key ("Copy" → "Copier" under fr).
+        Some(if presentation.literal {
+            presentation.label.clone()
+        } else if let Some(key) = Action::translation_key_for_label(&presentation.label) {
+            rust_i18n::t!(key).into_owned()
+        } else {
+            presentation.label.clone()
+        })
+    }
+
+    /// The ruled row under the keypad: a status square and the armed action's
+    /// name on the left, its compass position on the right. Both boxes are
+    /// fixed, so hovering only swaps text in place.
+    fn readout(&self) -> Div {
+        let armed = self
+            .hovered
+            .and_then(|slot| Some((self.slot_label(slot)?, compass(slot))));
+        let (square, label, label_color, code) = match armed {
+            Some((label, code)) => (accent(), label, text(), code),
+            None if self.cancel_hovered => (gpui::transparent_black(), "Cancel".into(), text_2(), ""),
+            None => (gpui::transparent_black(), "Actions".into(), text_dim(), ""),
+        };
+        let square = div().flex_none().size(px(6.0)).bg(square).when(
+            self.hovered.is_none(),
+            |square| square.border_1().border_color(text_dim()),
+        );
+        div()
+            .absolute()
+            .left(px(SHEET_LEFT + PAD))
+            .top(px(SHEET_TOP + GRID + 2.0 * PAD + 1.0))
+            .w(px(GRID))
+            .h(px(READOUT))
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_between()
+            .font_family(MONO)
+            .font_weight(FontWeight::MEDIUM)
+            .text_size(px(READOUT_TEXT))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(7.0))
+                    .min_w_0()
+                    .child(square)
+                    .child(
+                        div()
+                            .text_color(label_color)
+                            .whitespace_nowrap()
+                            .truncate()
+                            .child(SharedString::from(label.to_uppercase())),
+                    ),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .w(px(18.0))
+                    .text_right()
+                    .text_color(text_2())
+                    .child(SharedString::from(code)),
+            )
     }
 }
 
@@ -179,24 +342,19 @@ impl Render for RingView {
         let session_id = self.invocation.session_id;
         let root_commands = self.commands.clone();
         let center_commands = self.commands.clone();
-        let hovered_label = self.hovered.and_then(|slot| {
-            let presentation = self.invocation.slots.get(&slot)?;
-            // User-authored labels render verbatim: passing them through the
-            // localization table would translate any label that happens to
-            // collide with a known key ("Copy" → "Copier" under fr).
-            let label = if presentation.literal {
-                presentation.label.clone()
-            } else if let Some(key) = Action::translation_key_for_label(&presentation.label) {
-                rust_i18n::t!(key).into_owned()
-            } else {
-                presentation.label.clone()
-            };
-            Some(SharedString::from(label))
-        });
-        let slots = ActionRingSlot::ALL
+        let cells = ActionRingSlot::ALL
             .into_iter()
-            .filter_map(|slot| self.slot_element(slot, cx))
+            .map(|slot| self.slot_element(slot, cx))
             .collect::<Vec<_>>();
+        let (center_left, center_top) = cell_origin(0.0, 0.0);
+        let bracketed = match self.hovered {
+            Some(slot) => {
+                let (column, row) = grid_position(slot);
+                Some(cell_origin(column, row))
+            }
+            None if self.cancel_hovered => Some((center_left, center_top)),
+            None => None,
+        };
 
         div()
             .id("ring-root")
@@ -205,48 +363,61 @@ impl Render for RingView {
             .child(
                 div()
                     .absolute()
-                    .left(px(18.0))
-                    .top(px(18.0))
-                    .size(px(WINDOW_SIZE - 36.0))
-                    .rounded_full()
-                    .bg(PANEL)
+                    .left(px(SHEET_LEFT))
+                    .top(px(SHEET_TOP))
+                    .w(px(SHEET_WIDTH))
+                    .h(px(SHEET_HEIGHT))
+                    .bg(surface())
+                    .border_1()
+                    .border_color(edge())
                     .shadow_lg(),
             )
-            .children(slots)
+            .child(
+                div()
+                    .absolute()
+                    .left(px(SHEET_LEFT))
+                    .top(px(SHEET_TOP + GRID + 2.0 * PAD))
+                    .w(px(SHEET_WIDTH))
+                    .h(px(1.0))
+                    .bg(edge()),
+            )
+            .children(cells)
             .child(
                 div()
                     .id("ring-cancel")
                     .absolute()
-                    .left(px(WINDOW_SIZE / 2.0 - 24.0))
-                    .top(px(WINDOW_SIZE / 2.0 - 24.0))
-                    .size(px(48.0))
+                    .left(px(center_left))
+                    .top(px(center_top))
+                    .size(px(CELL))
                     .flex()
                     .items_center()
                     .justify_center()
-                    .rounded_full()
-                    .bg(CANCEL_RESTING)
-                    .text_color(CANCEL_GLYPH)
+                    .border_1()
+                    .border_color(edge())
                     .cursor_pointer()
-                    .child(svg().path(RING_CANCEL_ICON).size(px(20.0)).flex_none())
+                    // An svg paints with its own text colour; it does not
+                    // inherit the parent's, so the glyph sets it directly.
+                    .child(
+                        svg()
+                            .path(RING_CANCEL_ICON)
+                            .size(px(16.0))
+                            .flex_none()
+                            .text_color(if self.cancel_hovered { text() } else { text_2() }),
+                    )
+                    .on_hover(cx.listener(|this, hovered, _, cx| {
+                        if this.cancel_hovered != *hovered {
+                            this.cancel_hovered = *hovered;
+                            cx.notify();
+                        }
+                    }))
                     .on_click(move |_, window, cx| {
                         cx.stop_propagation();
                         let _ = center_commands.send(OverlayCommand::Cancel { session_id });
                         window.remove_window();
                     }),
             )
-            .when_some(hovered_label, |ring, label| {
-                ring.child(
-                    div()
-                        .absolute()
-                        .left(px(WINDOW_SIZE / 2.0 - 80.0))
-                        .top(px(WINDOW_SIZE / 2.0 + 34.0))
-                        .w(px(160.0))
-                        .text_center()
-                        .text_sm()
-                        .text_color(LABEL)
-                        .child(label),
-                )
-            })
+            .child(self.readout())
+            .when_some(bracketed, |ring, (left, top)| ring.children(brackets(left, top)))
             .on_click(move |_, window, _| {
                 let _ = root_commands.send(OverlayCommand::Cancel { session_id });
                 window.remove_window();

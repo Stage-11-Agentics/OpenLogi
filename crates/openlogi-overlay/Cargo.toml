@@ -47,3 +47,9 @@ windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Graphic
 
 [lints]
 workspace = true
+
+[features]
+# Development only: `OPENLOGI_RING_PREVIEW=default|c11` opens a static sample
+# ring at a fixed spot (no agent, no IPC) so the look can be screenshotted.
+# Release builds leave it off, so the shipped binary carries none of it.
+ring-preview = []

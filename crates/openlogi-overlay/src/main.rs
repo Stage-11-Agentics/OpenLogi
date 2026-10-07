@@ -16,6 +16,8 @@ rust_i18n::i18n!("../openlogi-ui/locales", fallback = "en");
 
 mod ipc;
 mod platform;
+#[cfg(feature = "ring-preview")]
+mod preview;
 mod ring;
 mod session;
 
@@ -36,6 +38,10 @@ fn main() -> Result<()> {
     openlogi_core::logging::init_stderr();
 
     openlogi_core::locale::activate(None);
+    #[cfg(feature = "ring-preview")]
+    if let Ok(which) = std::env::var("OPENLOGI_RING_PREVIEW") {
+        return preview::run(which);
+    }
     // Held for the whole run: dropping it hands the role to the replacement.
     let _tenancy = claim_the_role()?;
     let ipc::Handle {
