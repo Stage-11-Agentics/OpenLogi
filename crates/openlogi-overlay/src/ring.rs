@@ -9,12 +9,13 @@ use gpui::{Bounds, Pixels, Point, Size, point};
 use gpui::{
     Context, Hsla, InteractiveElement, IntoElement, ParentElement, Render, SharedString,
     StatefulInteractiveElement as _, Styled, Window, WindowBackgroundAppearance, WindowKind,
-    WindowOptions, div, prelude::FluentBuilder as _, px, svg,
+    WindowOptions, div, img, prelude::FluentBuilder as _, px, svg,
 };
 use openlogi_core::binding::{Action, ActionRingSlot};
 use openlogi_ipc::ActionRingInvocation;
 use openlogi_ui::action_icons::RING_CANCEL_ICON;
 use openlogi_ui::color;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
@@ -24,6 +25,27 @@ use crate::session::{ClickAwaySession, ShowingRing};
 pub(crate) const WINDOW_SIZE: f32 = 360.0;
 pub(crate) const SLOT_SIZE: f32 = 54.0;
 pub(crate) const RADIUS: f32 = 122.0;
+/// Edge of the square box a user-supplied slot image is fitted into.
+const CUSTOM_ICON_SIZE: f32 = 32.0;
+
+/// A user-supplied image for a slot with a custom label, drawn in full colour
+/// in place of the built-in glyph: `<config dir>/ring-icons/<label>.svg` or
+/// `.png`. Labels that could escape that directory are ignored.
+fn custom_icon_path(presentation: &openlogi_ipc::ActionRingPresentation) -> Option<PathBuf> {
+    let label = presentation.label.trim();
+    if !presentation.literal
+        || label.is_empty()
+        || label.starts_with('.')
+        || label.contains(['/', '\\'])
+    {
+        return None;
+    }
+    let directory = openlogi_core::paths::config_dir().ok()?.join("ring-icons");
+    ["svg", "png"]
+        .iter()
+        .map(|extension| directory.join(format!("{label}.{extension}")))
+        .find(|candidate| candidate.is_file())
+}
 
 /// The ring's own neutral scale. It floats over whatever is on the desktop, so
 /// unlike the settings app it cannot take its surfaces from the OS appearance —
@@ -122,7 +144,14 @@ impl RingView {
                 .shadow_md()
                 .text_color(GLYPH)
                 .cursor_pointer()
-                .child(svg().path(icon_path).size(px(22.0)).text_color(GLYPH))
+                .child(match custom_icon_path(presentation) {
+                    Some(path) => img(path).size(px(CUSTOM_ICON_SIZE)).into_any_element(),
+                    None => svg()
+                        .path(icon_path)
+                        .size(px(22.0))
+                        .text_color(GLYPH)
+                        .into_any_element(),
+                })
                 .on_hover(cx.listener(move |this, hovered, _, cx| {
                     if *hovered && this.hovered != Some(slot) {
                         this.hovered = Some(slot);
