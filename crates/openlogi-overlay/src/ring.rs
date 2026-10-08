@@ -45,6 +45,9 @@ const GLYPH_SIZE: f32 = 22.0;
 const CUSTOM_ICON_SIZE: f32 = 32.0;
 /// Hover brackets: four L marks outside the cell's corners.
 const BRACKET_GAP: f32 = 2.5;
+/// Pointer travel from the ring's opening position below which a release is a
+/// tap, not a selection.
+const RELEASE_TRAVEL: f32 = 12.0;
 const BRACKET_ARM: f32 = 8.0;
 const BRACKET_STROKE: f32 = 1.5;
 const MONO: &str = "JetBrains Mono";
@@ -173,6 +176,10 @@ pub(crate) struct RingView {
     cancel_hovered: bool,
     /// Publishes click-away identity for exactly this view's lifetime.
     _showing: ShowingRing,
+    /// Global top-left of this window, for reading the live cursor on release.
+    origin: Option<(f64, f64)>,
+    /// Pointer position, in window coordinates, when the ring opened.
+    opened_at: Option<(f32, f32)>,
 }
 
 impl RingView {
@@ -189,7 +196,50 @@ impl RingView {
             hovered: None,
             cancel_hovered: false,
             _showing: showing,
+            origin: None,
+            opened_at: None,
         }
+    }
+
+    /// Anchor the view to its window's global origin and record where the
+    /// pointer was when it opened, so a release can be resolved against the
+    /// live cursor. Without an origin a release never selects.
+    pub(crate) fn anchored(mut self, origin: Option<(f64, f64)>) -> Self {
+        self.origin = origin;
+        self.opened_at = self.local_cursor();
+        self
+    }
+
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "cursor coordinates are screen-sized and exactly usable as GPUI f32 pixels"
+    )]
+    fn local_cursor(&self) -> Option<(f32, f32)> {
+        let (left, top) = self.origin?;
+        let cursor = openlogi_hook::cursor_position()?;
+        Some(((cursor.x - left) as f32, (cursor.y - top) as f32))
+    }
+
+    /// The populated slot under the live cursor, provided the pointer has moved
+    /// far enough from where the ring opened to count as deliberate. Read from
+    /// the cursor, not hover state: hover can go stale when the pointer leaves
+    /// the window between events, and a ring clamped at a screen edge can open
+    /// with the pointer already over a slot.
+    fn release_target(&self) -> Option<ActionRingSlot> {
+        let start = self.opened_at?;
+        let (x, y) = self.local_cursor()?;
+        if (x - start.0).hypot(y - start.1) < RELEASE_TRAVEL {
+            return None;
+        }
+        ActionRingSlot::ALL.into_iter().find(|slot| {
+            let (left, top) = {
+                let (column, row) = grid_position(*slot);
+                cell_origin(column, row)
+            };
+            self.invocation.slots.contains_key(slot)
+                && (left..=left + CELL).contains(&x)
+                && (top..=top + CELL).contains(&y)
+        })
     }
 
     /// Preview builds only: draw `slot` as hovered without a pointer.
@@ -210,12 +260,9 @@ impl RingView {
     /// the pointer and close, exactly as a click on it would. Released over the
     /// centre, a gap or an empty cell, the ring stays open for a click.
     pub(crate) fn commit_release(&self, window: &mut Window) {
-        let Some(slot) = self.hovered else {
+        let Some(slot) = self.release_target() else {
             return;
         };
-        if !self.invocation.slots.contains_key(&slot) {
-            return;
-        }
         let _ = self.commands.send(OverlayCommand::Activate {
             session_id: self.invocation.session_id,
             slot,

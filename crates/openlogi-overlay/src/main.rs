@@ -57,8 +57,10 @@ fn main() -> Result<()> {
         spawn_click_away_dismissal(cx, Arc::clone(&live_session));
         cx.spawn(async move |cx| {
             // The ring on screen, so a later observation of the same session
-            // (its trigger released) reaches that view instead of reopening it.
-            let mut showing: Option<(u64, gpui::WindowHandle<RingView>)> = None;
+            // (its trigger released) reaches that view instead of reopening it,
+            // and whether its release has been handled: a reconnect re-delivers
+            // the released invocation, which must not commit a second time.
+            let mut showing: Option<(u64, gpui::WindowHandle<RingView>, bool)> = None;
             while let Some(observed) = invocations.recv().await {
                 // No ring is what a dismissal looks like: close whatever is
                 // showing and open nothing. The agent has already forgotten the
@@ -72,10 +74,12 @@ fn main() -> Result<()> {
                     });
                     continue;
                 };
-                if let Some((session_id, handle)) = showing.as_ref()
+                if let Some((session_id, handle, released)) = showing.as_mut()
                     && *session_id == invocation.session_id
                 {
-                    if invocation.trigger_released {
+                    if invocation.trigger_released && !*released {
+                        *released = true;
+                        let handle = *handle;
                         let _ = cx.update(|cx| {
                             handle.update(cx, |view, window, _| view.commit_release(window))
                         });
@@ -100,8 +104,14 @@ fn main() -> Result<()> {
                     let commands = commands.clone();
                     let timeout_commands = commands.clone();
                     let session_id = invocation.session_id;
+                    // Already released when first seen: a tap that finished
+                    // before the window opened, with nothing left to commit.
+                    let released = invocation.trigger_released;
+                    let origin = placement.global_origin();
                     match cx.open_window(placement.window_options(), |_, cx| {
-                        cx.new(|_| RingView::new(invocation, commands, &live_session))
+                        cx.new(|_| {
+                            RingView::new(invocation, commands, &live_session).anchored(origin)
+                        })
                     }) {
                         Ok(handle) => {
                             if let Err(error) = handle
@@ -125,7 +135,7 @@ fn main() -> Result<()> {
                                 }
                             })
                             .detach();
-                            Some((session_id, handle))
+                            Some((session_id, handle, released))
                         }
                         Err(error) => {
                             warn!(%error, "could not open Actions Ring window");

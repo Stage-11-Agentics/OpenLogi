@@ -85,10 +85,12 @@ struct ActionExecutor {
 }
 
 impl ActionExecutor {
-    fn release_action_ring(&self) {
+    fn release_action_ring(&self, device_key: Option<&str>) {
         if self
             .action_ring
-            .send(crate::action_ring::RingTrigger::Released)
+            .send(crate::action_ring::RingTrigger::Released(
+                device_key.map(str::to_owned),
+            ))
             .is_err()
         {
             warn!("Actions Ring runtime unavailable — release ignored");
@@ -194,6 +196,9 @@ impl ActionExecutor {
 struct ButtonEventHandler {
     executor: ActionExecutor,
     held: HeldShortcuts,
+    /// Presses that already fired a gesture action. Their release must not
+    /// also commit a ring slot.
+    gestured: std::collections::HashSet<PressToken>,
 }
 
 impl ButtonEventHandler {
@@ -201,6 +206,7 @@ impl ButtonEventHandler {
         Self {
             executor,
             held: HeldShortcuts::default(),
+            gestured: std::collections::HashSet::new(),
         }
     }
 
@@ -212,17 +218,21 @@ impl ButtonEventHandler {
                 }
             }
             ButtonRuntimeEvent::Triggered { press, action } => {
+                self.gestured.insert(press.token().clone());
                 self.start_action(press.token(), &action, press.device_key(), press.target());
             }
             ButtonRuntimeEvent::Ended { press, reason } => {
                 self.held.end(press.token());
+                let gestured = self.gestured.remove(press.token());
                 // Releasing the press that opened a ring lets the overlay commit
                 // the slot under the pointer. A canceled lifecycle has no real
-                // release edge, so it never selects.
+                // release edge, and a press that fired a gesture already acted,
+                // so neither selects.
                 if matches!(reason, EndReason::Released)
+                    && !gestured
                     && matches!(press.start_action(), Some(Action::ShowActionsRing))
                 {
-                    self.executor.release_action_ring();
+                    self.executor.release_action_ring(press.device_key());
                 }
                 if let EndReason::Canceled(reason) = reason {
                     match press.control() {

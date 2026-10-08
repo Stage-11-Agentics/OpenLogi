@@ -50,8 +50,9 @@ pub enum RingTrigger {
     /// The control went down: open a ring, or close the one showing. Carries
     /// the config key of the device the control belongs to.
     Pressed(Option<String>),
-    /// The press that opened the ring came back up.
-    Released,
+    /// The press that opened the ring came back up. Carries the same device
+    /// key, so a release from another device cannot commit this ring.
+    Released(Option<String>),
 }
 
 /// A validated slot activation returned to the action dispatcher.
@@ -192,11 +193,14 @@ impl ActionRingManager {
     /// Record that the press which opened the showing ring was released, and
     /// wake the overlay so it can commit the slot under the pointer. Only the
     /// first release of a session counts; a release after a dismissing press
-    /// finds no session and does nothing.
-    pub fn release_trigger(&self) {
+    /// finds no session, and a release from another device than the one that
+    /// opened the ring is ignored.
+    pub fn release_trigger(&self, device_key: Option<&str>) {
         let mut state = self.state();
         state.expire();
-        if let Some(session) = state.active.as_mut() {
+        if let Some(session) = state.active.as_mut()
+            && device_key.is_none_or(|key| key == session.device_key)
+        {
             session.invocation.trigger_released = true;
         }
         self.publish(&state);
@@ -409,13 +413,16 @@ mod tests {
         let opened = manager.begin(spec());
         let before = manager.observe(0).await;
         assert!(!opened.trigger_released);
-        manager.release_trigger();
+        // Another device's release leaves this ring alone.
+        manager.release_trigger(Some("serial:someone-else"));
+        assert_eq!(manager.observe(0).await.generation, before.generation);
+        manager.release_trigger(Some(&spec().device_key));
         let after = manager.observe(before.generation).await;
         let released = after.invocation.expect("ring still showing after release");
         assert_eq!(released.session_id, opened.session_id);
         assert!(released.trigger_released);
         // A second release changes nothing, so it wakes nobody.
-        manager.release_trigger();
+        manager.release_trigger(None);
         assert_eq!(manager.observe(0).await.generation, after.generation);
     }
 
@@ -423,7 +430,7 @@ mod tests {
     async fn a_release_with_no_ring_showing_is_ignored() {
         let manager = ActionRingManager::default();
         let before = manager.observe(0).await.generation;
-        manager.release_trigger();
+        manager.release_trigger(None);
         assert_eq!(manager.observe(0).await.generation, before);
         assert!(manager.observe(0).await.invocation.is_none());
     }

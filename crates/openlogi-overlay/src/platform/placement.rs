@@ -8,6 +8,9 @@ use crate::ring::{WINDOW_SIZE, clamp_window_origin, ring_window_options};
 pub(crate) struct RingPlacement {
     display_id: Option<DisplayId>,
     bounds: Bounds<Pixels>,
+    /// Global top-left of the window in the cursor's coordinate space, when the
+    /// native display lookup succeeded.
+    global_origin: Option<(f64, f64)>,
 }
 
 impl RingPlacement {
@@ -27,6 +30,7 @@ impl RingPlacement {
         let native_display = cursor
             .as_ref()
             .and_then(|cursor| super::display_containing(cursor.x, cursor.y));
+        let display_origin = native_display.as_ref().map(|display| display.origin);
         let (display_id, center, display_bounds) =
             if let (Some(cursor), Some(display)) = (&cursor, native_display) {
                 (
@@ -62,10 +66,23 @@ impl RingPlacement {
         let origin = display_bounds.map_or(desired_origin, |display_bounds| {
             clamp_window_origin(desired_origin, size, display_bounds)
         });
+        let global_origin = display_origin.filter(|_| cursor.is_some()).map(|(x, y)| {
+            (
+                x + f64::from(origin.x / px(1.0)),
+                y + f64::from(origin.y / px(1.0)),
+            )
+        });
         Ok(Self {
             bounds: Bounds::new(origin, size),
             display_id,
+            global_origin,
         })
+    }
+
+    /// Global top-left of the ring window, in the coordinate space of
+    /// [`openlogi_hook::cursor_position`], or `None` when it is unknown.
+    pub(crate) const fn global_origin(&self) -> Option<(f64, f64)> {
+        self.global_origin
     }
 
     pub(crate) fn window_options(&self) -> WindowOptions {

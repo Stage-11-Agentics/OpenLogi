@@ -17,6 +17,17 @@ pub(crate) struct RingPlacement {
 }
 
 impl RingPlacement {
+    /// Unknown here: release-to-select is not wired on Windows, so a release
+    /// leaves the ring open for a click.
+    #[expect(
+        clippy::unused_self,
+        reason = "matches the other platforms' placement API"
+    )]
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    pub(crate) const fn global_origin(&self) -> Option<(f64, f64)> {
+        None
+    }
+
     pub(crate) fn window_options(&self) -> WindowOptions {
         WindowOptions {
             display_id: Some(self.display_id),
