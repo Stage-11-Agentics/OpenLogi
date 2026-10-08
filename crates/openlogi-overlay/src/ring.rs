@@ -139,7 +139,10 @@ fn brackets(left: f32, top: f32) -> Vec<Div> {
     let near = BRACKET_GAP + BRACKET_STROKE;
     let (x0, y0) = (left - near, top - near);
     let (x1, y1) = (left + CELL + BRACKET_GAP, top + CELL + BRACKET_GAP);
-    let (x1_arm, y1_arm) = (x1 + BRACKET_STROKE - BRACKET_ARM, y1 + BRACKET_STROKE - BRACKET_ARM);
+    let (x1_arm, y1_arm) = (
+        x1 + BRACKET_STROKE - BRACKET_ARM,
+        y1 + BRACKET_STROKE - BRACKET_ARM,
+    );
     let bar = |x: f32, y: f32, w: f32, h: f32| {
         div()
             .absolute()
@@ -201,6 +204,23 @@ impl RingView {
     pub(crate) fn preview_cancel_hovered(mut self) -> Self {
         self.cancel_hovered = true;
         self
+    }
+
+    /// The press that opened this ring was released: activate the slot under
+    /// the pointer and close, exactly as a click on it would. Released over the
+    /// centre, a gap or an empty cell, the ring stays open for a click.
+    pub(crate) fn commit_release(&self, window: &mut Window) {
+        let Some(slot) = self.hovered else {
+            return;
+        };
+        if !self.invocation.slots.contains_key(&slot) {
+            return;
+        }
+        let _ = self.commands.send(OverlayCommand::Activate {
+            session_id: self.invocation.session_id,
+            slot,
+        });
+        window.remove_window();
     }
 
     /// The ring session this view is showing.
@@ -290,13 +310,18 @@ impl RingView {
             .and_then(|slot| Some((self.slot_label(slot)?, compass(slot))));
         let (square, label, label_color, code) = match armed {
             Some((label, code)) => (accent(), label, text(), code),
-            None if self.cancel_hovered => (gpui::transparent_black(), "Cancel".into(), text_2(), ""),
+            None if self.cancel_hovered => {
+                (gpui::transparent_black(), "Cancel".into(), text_2(), "")
+            }
             None => (gpui::transparent_black(), "Actions".into(), text_dim(), ""),
         };
-        let square = div().flex_none().size(px(6.0)).bg(square).when(
-            self.hovered.is_none(),
-            |square| square.border_1().border_color(text_dim()),
-        );
+        let square = div()
+            .flex_none()
+            .size(px(6.0))
+            .bg(square)
+            .when(self.hovered.is_none(), |square| {
+                square.border_1().border_color(text_dim())
+            });
         div()
             .absolute()
             .left(px(SHEET_LEFT + PAD))
@@ -417,7 +442,9 @@ impl Render for RingView {
                     }),
             )
             .child(self.readout())
-            .when_some(bracketed, |ring, (left, top)| ring.children(brackets(left, top)))
+            .when_some(bracketed, |ring, (left, top)| {
+                ring.children(brackets(left, top))
+            })
             .on_click(move |_, window, _| {
                 let _ = root_commands.send(OverlayCommand::Cancel { session_id });
                 window.remove_window();

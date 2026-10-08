@@ -255,8 +255,10 @@ fn action_ring_types() {
                 },
             )]),
             language: Some("fr".to_string()),
+            trigger_released: true,
         },
-        "2a010003437574000701026672",
+        // The released flag is the trailing byte.
+        "2a01000343757400070102667201",
     );
     // The literal flag is one byte between label and icon.
     assert_wire(

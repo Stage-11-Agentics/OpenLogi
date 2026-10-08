@@ -25,6 +25,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures::StreamExt as _;
+use openlogi_agent_core::action_ring::RingTrigger;
 use openlogi_agent_core::event_monitor::EventMonitor;
 use openlogi_agent_core::observable::ObservableState;
 use openlogi_agent_core::orchestrator::{Orchestrator, SharedHandles};
@@ -298,9 +299,12 @@ impl Armed {
                 Some(event) = watchers.next() => {
                     running.apply_watcher(event, &inventory_refresh).await;
                 }
-                Some(device_key) = running.inputs.triggers.recv() => {
-                    running.begin_action_ring(device_key.as_deref()).await;
-                }
+                Some(trigger) = running.inputs.triggers.recv() => match trigger {
+                    RingTrigger::Pressed(device_key) => {
+                        running.begin_action_ring(device_key.as_deref()).await;
+                    }
+                    RingTrigger::Released => running.inputs.ring.release_trigger(),
+                },
                 else => break,
             }
         }

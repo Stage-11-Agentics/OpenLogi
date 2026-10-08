@@ -56,11 +56,15 @@ fn main() -> Result<()> {
         let live_session = Arc::new(ClickAwaySession::new());
         spawn_click_away_dismissal(cx, Arc::clone(&live_session));
         cx.spawn(async move |cx| {
+            // The ring on screen, so a later observation of the same session
+            // (its trigger released) reaches that view instead of reopening it.
+            let mut showing: Option<(u64, gpui::WindowHandle<RingView>)> = None;
             while let Some(observed) = invocations.recv().await {
                 // No ring is what a dismissal looks like: close whatever is
                 // showing and open nothing. The agent has already forgotten the
                 // session, so there is nothing to acknowledge either.
                 let Some(invocation) = observed else {
+                    showing = None;
                     cx.update(|cx| {
                         for handle in cx.windows() {
                             let _ = handle.update(cx, |_, window, _| window.remove_window());
@@ -68,8 +72,18 @@ fn main() -> Result<()> {
                     });
                     continue;
                 };
+                if let Some((session_id, handle)) = showing.as_ref()
+                    && *session_id == invocation.session_id
+                {
+                    if invocation.trigger_released {
+                        let _ = cx.update(|cx| {
+                            handle.update(cx, |view, window, _| view.commit_release(window))
+                        });
+                    }
+                    continue;
+                }
                 openlogi_core::locale::activate(invocation.language.as_deref());
-                cx.update(|cx| {
+                showing = cx.update(|cx| {
                     for handle in cx.windows() {
                         let _ = handle.update(cx, |_, window, _| window.remove_window());
                     }
@@ -80,7 +94,7 @@ fn main() -> Result<()> {
                             let _ = commands.send(OverlayCommand::Cancel {
                                 session_id: invocation.session_id,
                             });
-                            return;
+                            return None;
                         }
                     };
                     let commands = commands.clone();
@@ -98,7 +112,7 @@ fn main() -> Result<()> {
                                 let _ = handle.update(cx, |_, window, _| window.remove_window());
                                 let _ =
                                     timeout_commands.send(OverlayCommand::Cancel { session_id });
-                                return;
+                                return None;
                             }
                             cx.spawn(async move |cx| {
                                 cx.background_executor().timer(DISPLAY_LIFETIME).await;
@@ -111,8 +125,12 @@ fn main() -> Result<()> {
                                 }
                             })
                             .detach();
+                            Some((session_id, handle))
                         }
-                        Err(error) => warn!(%error, "could not open Actions Ring window"),
+                        Err(error) => {
+                            warn!(%error, "could not open Actions Ring window");
+                            None
+                        }
                     }
                 });
             }

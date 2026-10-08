@@ -119,7 +119,8 @@ fn spawn_ipc_server(
 /// until an action is dispatched, so [`bootstrap`] may start them.
 pub(crate) struct InputServices {
     pub(crate) ring: Arc<ActionRingManager>,
-    pub(crate) triggers: tokio::sync::mpsc::UnboundedReceiver<Option<String>>,
+    pub(crate) triggers:
+        tokio::sync::mpsc::UnboundedReceiver<openlogi_agent_core::action_ring::RingTrigger>,
     pub(crate) dispatcher: ActionDispatcher,
     action_runtime: ActionRuntime,
     pub(crate) scroll_input: ScrollInputHandle,

@@ -47,8 +47,14 @@ fn sample(which: &str) -> BTreeMap<ActionRingSlot, ActionRingPresentation> {
         slots.insert(S::TopRight, custom("MouthKeys", ActionRingIcon::Keyboard));
         slots.insert(S::Right, custom("Tab right", ActionRingIcon::NextTab));
         slots.insert(S::BottomRight, custom("Return", ActionRingIcon::ArrowDown));
-        slots.insert(S::Bottom, custom("Workspace down", ActionRingIcon::ArrowDown));
-        slots.insert(S::BottomLeft, custom("Go to waiting", ActionRingIcon::Search));
+        slots.insert(
+            S::Bottom,
+            custom("Workspace down", ActionRingIcon::ArrowDown),
+        );
+        slots.insert(
+            S::BottomLeft,
+            custom("Go to waiting", ActionRingIcon::Search),
+        );
         slots.insert(S::Left, custom("Tab left", ActionRingIcon::PreviousTab));
         slots.insert(S::TopLeft, custom("New agent", ActionRingIcon::Terminal));
     } else {
@@ -81,6 +87,7 @@ pub(crate) fn run(which: String) -> Result<()> {
         session_id: 1,
         slots,
         language: None,
+        trigger_released: false,
     };
 
     let app = gpui_platform::application().with_assets(openlogi_ui::action_icons::ActionIcons);

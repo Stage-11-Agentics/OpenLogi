@@ -43,6 +43,17 @@ pub struct ActionRingSessionSpec {
     pub language: Option<String>,
 }
 
+/// What a control bound to Show Actions Ring did, sent from input dispatch to
+/// the agent loop that owns ring sessions.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RingTrigger {
+    /// The control went down: open a ring, or close the one showing. Carries
+    /// the config key of the device the control belongs to.
+    Pressed(Option<String>),
+    /// The press that opened the ring came back up.
+    Released,
+}
+
 /// A validated slot activation returned to the action dispatcher.
 pub struct ActionRingActivation {
     /// Config key of the device whose control opened the ring.
@@ -143,6 +154,7 @@ impl ActionRingManager {
             session_id,
             slots,
             language: spec.language,
+            trigger_released: false,
         };
         let mut state = self.state();
         state.active = Some(Session {
@@ -175,6 +187,19 @@ impl ActionRingManager {
         }
         self.publish(&state);
         dismissed
+    }
+
+    /// Record that the press which opened the showing ring was released, and
+    /// wake the overlay so it can commit the slot under the pointer. Only the
+    /// first release of a session counts; a release after a dismissing press
+    /// finds no session and does nothing.
+    pub fn release_trigger(&self) {
+        let mut state = self.state();
+        state.expire();
+        if let Some(session) = state.active.as_mut() {
+            session.invocation.trigger_released = true;
+        }
+        self.publish(&state);
     }
 
     /// Serve one [`Agent::observe_action_ring`](openlogi_ipc::Agent::observe_action_ring).
@@ -376,6 +401,31 @@ mod tests {
             manager.activate(invocation.session_id, ActionRingSlot::Top),
             Err(ActionRingCommandError::SessionNotFound)
         ));
+    }
+
+    #[tokio::test]
+    async fn releasing_the_trigger_republishes_the_same_session() {
+        let manager = ActionRingManager::default();
+        let opened = manager.begin(spec());
+        let before = manager.observe(0).await;
+        assert!(!opened.trigger_released);
+        manager.release_trigger();
+        let after = manager.observe(before.generation).await;
+        let released = after.invocation.expect("ring still showing after release");
+        assert_eq!(released.session_id, opened.session_id);
+        assert!(released.trigger_released);
+        // A second release changes nothing, so it wakes nobody.
+        manager.release_trigger();
+        assert_eq!(manager.observe(0).await.generation, after.generation);
+    }
+
+    #[tokio::test]
+    async fn a_release_with_no_ring_showing_is_ignored() {
+        let manager = ActionRingManager::default();
+        let before = manager.observe(0).await.generation;
+        manager.release_trigger();
+        assert_eq!(manager.observe(0).await.generation, before);
+        assert!(manager.observe(0).await.invocation.is_none());
     }
 
     #[test]

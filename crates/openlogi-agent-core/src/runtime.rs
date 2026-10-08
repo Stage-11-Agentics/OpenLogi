@@ -81,10 +81,20 @@ impl HeldShortcuts {
 struct ActionExecutor {
     dpi_cycle: Arc<RwLock<DpiCycles>>,
     access: DeviceAccess,
-    action_ring: tokio::sync::mpsc::UnboundedSender<Option<String>>,
+    action_ring: tokio::sync::mpsc::UnboundedSender<crate::action_ring::RingTrigger>,
 }
 
 impl ActionExecutor {
+    fn release_action_ring(&self) {
+        if self
+            .action_ring
+            .send(crate::action_ring::RingTrigger::Released)
+            .is_err()
+        {
+            warn!("Actions Ring runtime unavailable — release ignored");
+        }
+    }
+
     fn dispatch(&self, action: &Action, device_key: Option<&str>) {
         self.dispatch_to(action, device_key, ActionDispatchTarget::capture());
     }
@@ -97,7 +107,9 @@ impl ActionExecutor {
         if matches!(action, Action::ShowActionsRing) {
             if self
                 .action_ring
-                .send(device_key.map(str::to_owned))
+                .send(crate::action_ring::RingTrigger::Pressed(
+                    device_key.map(str::to_owned),
+                ))
                 .is_err()
             {
                 warn!("Actions Ring runtime unavailable — trigger ignored");
@@ -204,6 +216,14 @@ impl ButtonEventHandler {
             }
             ButtonRuntimeEvent::Ended { press, reason } => {
                 self.held.end(press.token());
+                // Releasing the press that opened a ring lets the overlay commit
+                // the slot under the pointer. A canceled lifecycle has no real
+                // release edge, so it never selects.
+                if matches!(reason, EndReason::Released)
+                    && matches!(press.start_action(), Some(Action::ShowActionsRing))
+                {
+                    self.executor.release_action_ring();
+                }
                 if let EndReason::Canceled(reason) = reason {
                     match press.control() {
                         PressControl::Button(button) => {
@@ -256,7 +276,7 @@ impl ActionRuntime {
     pub fn new(
         dpi_cycle: Arc<RwLock<DpiCycles>>,
         access: DeviceAccess,
-        action_ring: tokio::sync::mpsc::UnboundedSender<Option<String>>,
+        action_ring: tokio::sync::mpsc::UnboundedSender<crate::action_ring::RingTrigger>,
     ) -> io::Result<Self> {
         let executor = ActionExecutor {
             dpi_cycle,

@@ -393,6 +393,10 @@ pub struct ActionRingInvocation {
     pub slots: BTreeMap<ActionRingSlot, ActionRingPresentation>,
     /// Configured UI locale, or `None` to follow the overlay host's system locale.
     pub language: Option<String>,
+    /// Set once the press that opened this ring is released. The overlay then
+    /// commits the slot under the pointer, so press, move and release selects
+    /// in one gesture; a release over no slot leaves the ring open for a click.
+    pub trigger_released: bool,
 }
 
 /// The ring the overlay should be showing, stamped with its generation.
