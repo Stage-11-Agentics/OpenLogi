@@ -3,7 +3,10 @@
 //! `OPENLOGI_RING_PREVIEW=default|c11` opens one sample ring at a fixed spot on
 //! the primary display, with no agent and no IPC. `OPENLOGI_RING_PREVIEW_HOVER`
 //! names a slot (or `Center`) to draw as hovered, `OPENLOGI_RING_PREVIEW_EMPTY`
-//! a slot to leave empty, and `OPENLOGI_RING_PREVIEW_AT=x,y` moves the window.
+//! a slot to leave empty, `OPENLOGI_RING_PREVIEW_HELD=1` draws the trigger as
+//! held (a hovered slot then draws pressed), `OPENLOGI_RING_PREVIEW_APPEARANCE`
+//! `light` or `dark` overrides the system appearance, and
+//! `OPENLOGI_RING_PREVIEW_AT=x,y` moves the window.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -74,6 +77,12 @@ pub(crate) fn run(which: String) -> Result<()> {
     let hover = std::env::var("OPENLOGI_RING_PREVIEW_HOVER").unwrap_or_default();
     let empty = std::env::var("OPENLOGI_RING_PREVIEW_EMPTY").unwrap_or_default();
     let at = std::env::var("OPENLOGI_RING_PREVIEW_AT").unwrap_or_default();
+    let held = std::env::var("OPENLOGI_RING_PREVIEW_HELD").is_ok_and(|value| value == "1");
+    let appearance = match std::env::var("OPENLOGI_RING_PREVIEW_APPEARANCE").as_deref() {
+        Ok("light") => Some(gpui::WindowAppearance::Light),
+        Ok("dark") => Some(gpui::WindowAppearance::Dark),
+        _ => None,
+    };
     let (x, y) = at
         .split_once(',')
         .and_then(|(x, y)| Some((x.trim().parse().ok()?, y.trim().parse().ok()?)))
@@ -88,6 +97,7 @@ pub(crate) fn run(which: String) -> Result<()> {
         slots,
         language: None,
         trigger_released: false,
+        release_selects: false,
     };
 
     let app = gpui_platform::application().with_assets(openlogi_ui::action_icons::ActionIcons);
@@ -107,7 +117,13 @@ pub(crate) fn run(which: String) -> Result<()> {
         };
         let opened = cx.open_window(options, |_, cx| {
             cx.new(|_| {
-                let view = RingView::new(invocation, commands, &live);
+                let mut view = RingView::new(invocation, commands, &live);
+                if held {
+                    view = view.preview_held();
+                }
+                if let Some(appearance) = appearance {
+                    view = view.preview_appearance(appearance);
+                }
                 if hover.eq_ignore_ascii_case("center") {
                     view.preview_cancel_hovered()
                 } else {

@@ -79,10 +79,7 @@ fn main() -> Result<()> {
                 {
                     if invocation.trigger_released && !*released {
                         *released = true;
-                        let handle = *handle;
-                        let _ = cx.update(|cx| {
-                            handle.update(cx, |view, window, _| view.commit_release(window))
-                        });
+                        release(*handle, invocation.release_selects, cx);
                     }
                     continue;
                 }
@@ -109,8 +106,10 @@ fn main() -> Result<()> {
                     let released = invocation.trigger_released;
                     let origin = placement.global_origin();
                     match cx.open_window(placement.window_options(), |_, cx| {
-                        cx.new(|_| {
-                            RingView::new(invocation, commands, &live_session).anchored(origin)
+                        cx.new(|cx| {
+                            RingView::new(invocation, commands, &live_session)
+                                .anchored(origin)
+                                .watch_hold(cx)
                         })
                     }) {
                         Ok(handle) => {
@@ -148,6 +147,15 @@ fn main() -> Result<()> {
         .detach();
     });
     Ok(())
+}
+
+/// Hand the showing ring's trigger release to its view.
+fn release(handle: gpui::WindowHandle<RingView>, selects: bool, cx: &mut gpui::AsyncApp) {
+    let _ = cx.update(|cx| {
+        handle.update(cx, |view, window, cx| {
+            view.release_trigger(selects, window, cx);
+        })
+    });
 }
 
 #[cfg(test)]

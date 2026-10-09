@@ -23,7 +23,13 @@ impl RingPlacement {
         clippy::unused_self,
         reason = "matches the other platforms' placement API"
     )]
-    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    #[cfg_attr(
+        not(target_os = "windows"),
+        expect(
+            dead_code,
+            reason = "only the Windows build calls it; tests compile it elsewhere"
+        )
+    )]
     pub(crate) const fn global_origin(&self) -> Option<(f64, f64)> {
         None
     }

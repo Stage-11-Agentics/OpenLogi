@@ -85,12 +85,13 @@ struct ActionExecutor {
 }
 
 impl ActionExecutor {
-    fn release_action_ring(&self, device_key: Option<&str>) {
+    fn release_action_ring(&self, device_key: Option<&str>, selects: bool) {
         if self
             .action_ring
-            .send(crate::action_ring::RingTrigger::Released(
-                device_key.map(str::to_owned),
-            ))
+            .send(crate::action_ring::RingTrigger::Released {
+                device_key: device_key.map(str::to_owned),
+                selects,
+            })
             .is_err()
         {
             warn!("Actions Ring runtime unavailable — release ignored");
@@ -224,15 +225,15 @@ impl ButtonEventHandler {
             ButtonRuntimeEvent::Ended { press, reason } => {
                 self.held.end(press.token());
                 let gestured = self.gestured.remove(press.token());
-                // Releasing the press that opened a ring lets the overlay commit
-                // the slot under the pointer. A canceled lifecycle has no real
+                // However the press that opened a ring ends, the overlay stops
+                // showing it as held. A real release also lets it commit the
+                // slot under the pointer; a canceled lifecycle has no real
                 // release edge, and a press that fired a gesture already acted,
                 // so neither selects.
-                if matches!(reason, EndReason::Released)
-                    && !gestured
-                    && matches!(press.start_action(), Some(Action::ShowActionsRing))
-                {
-                    self.executor.release_action_ring(press.device_key());
+                if matches!(press.start_action(), Some(Action::ShowActionsRing)) {
+                    let selects = matches!(reason, EndReason::Released) && !gestured;
+                    self.executor
+                        .release_action_ring(press.device_key(), selects);
                 }
                 if let EndReason::Canceled(reason) = reason {
                     match press.control() {

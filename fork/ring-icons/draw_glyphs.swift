@@ -1,9 +1,14 @@
 // Datasheet Mono ring glyphs: a 24-unit grid inside a 32-unit box, square caps, miter joins,
-// ink white, orange only for "needs you". Usage: draw <out dir>
+// orange only for "needs you". Usage: draw <out dir> [light]
+// Ink is white for a dark cell (<name>.png); `light` draws ink #111214 for a light cell
+// (<name>.light.png), which the ring uses in the light appearance and on a pressed cell in dark.
 import AppKit
 
 let out = CommandLine.arguments[1]
-let white = CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1)
+let light = CommandLine.arguments.count > 2 && CommandLine.arguments[2] == "light"
+let white = light
+    ? CGColor(srgbRed: 0x11 / 255.0, green: 0x12 / 255.0, blue: 0x14 / 255.0, alpha: 1)
+    : CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1)
 let orange = CGColor(srgbRed: 1, green: 0x4F / 255.0, blue: 0x1F / 255.0, alpha: 1)
 
 enum Mark { case line([CGPoint]), fill(CGRect, CGColor) }
@@ -40,5 +45,5 @@ for (name, marks) in glyphs {
         }
     }
     let png = NSBitmapImageRep(cgImage: ctx.makeImage()!).representation(using: .png, properties: [:])!
-    try! png.write(to: URL(fileURLWithPath: out).appendingPathComponent("\(name).png"))
+    try! png.write(to: URL(fileURLWithPath: out).appendingPathComponent("\(name)\(light ? ".light" : "").png"))
 }

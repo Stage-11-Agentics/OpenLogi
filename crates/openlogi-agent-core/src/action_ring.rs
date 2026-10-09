@@ -51,8 +51,12 @@ pub enum RingTrigger {
     /// the config key of the device the control belongs to.
     Pressed(Option<String>),
     /// The press that opened the ring came back up. Carries the same device
-    /// key, so a release from another device cannot commit this ring.
-    Released(Option<String>),
+    /// key, so a release from another device cannot commit this ring, and
+    /// whether the release may select a slot.
+    Released {
+        device_key: Option<String>,
+        selects: bool,
+    },
 }
 
 /// A validated slot activation returned to the action dispatcher.
@@ -156,6 +160,7 @@ impl ActionRingManager {
             slots,
             language: spec.language,
             trigger_released: false,
+            release_selects: false,
         };
         let mut state = self.state();
         state.active = Some(Session {
@@ -190,18 +195,21 @@ impl ActionRingManager {
         dismissed
     }
 
-    /// Record that the press which opened the showing ring was released, and
-    /// wake the overlay so it can commit the slot under the pointer. Only the
-    /// first release of a session counts; a release after a dismissing press
-    /// finds no session, and a release from another device than the one that
-    /// opened the ring is ignored.
-    pub fn release_trigger(&self, device_key: Option<&str>) {
+    /// Record that the press which opened the showing ring came back up, and
+    /// wake the overlay so it can stop showing the ring as held and, when
+    /// `selects`, commit the slot under the pointer. Only the first release of
+    /// a session counts; a release after a dismissing press finds no session,
+    /// and a release from another device than the one that opened the ring is
+    /// ignored.
+    pub fn release_trigger(&self, device_key: Option<&str>, selects: bool) {
         let mut state = self.state();
         state.expire();
         if let Some(session) = state.active.as_mut()
+            && !session.invocation.trigger_released
             && device_key.is_none_or(|key| key == session.device_key)
         {
             session.invocation.trigger_released = true;
+            session.invocation.release_selects = selects;
         }
         self.publish(&state);
     }
@@ -414,15 +422,16 @@ mod tests {
         let before = manager.observe(0).await;
         assert!(!opened.trigger_released);
         // Another device's release leaves this ring alone.
-        manager.release_trigger(Some("serial:someone-else"));
+        manager.release_trigger(Some("serial:someone-else"), true);
         assert_eq!(manager.observe(0).await.generation, before.generation);
-        manager.release_trigger(Some(&spec().device_key));
+        manager.release_trigger(Some(&spec().device_key), true);
         let after = manager.observe(before.generation).await;
         let released = after.invocation.expect("ring still showing after release");
         assert_eq!(released.session_id, opened.session_id);
         assert!(released.trigger_released);
+        assert!(released.release_selects);
         // A second release changes nothing, so it wakes nobody.
-        manager.release_trigger(None);
+        manager.release_trigger(None, false);
         assert_eq!(manager.observe(0).await.generation, after.generation);
     }
 
@@ -430,9 +439,21 @@ mod tests {
     async fn a_release_with_no_ring_showing_is_ignored() {
         let manager = ActionRingManager::default();
         let before = manager.observe(0).await.generation;
-        manager.release_trigger(None);
+        manager.release_trigger(None, true);
         assert_eq!(manager.observe(0).await.generation, before);
         assert!(manager.observe(0).await.invocation.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_release_that_cannot_select_still_ends_the_hold() {
+        let manager = ActionRingManager::default();
+        manager.begin(spec());
+        let before = manager.observe(0).await;
+        manager.release_trigger(Some(&spec().device_key), false);
+        let after = manager.observe(before.generation).await;
+        let released = after.invocation.expect("ring still showing after release");
+        assert!(released.trigger_released);
+        assert!(!released.release_selects);
     }
 
     #[test]

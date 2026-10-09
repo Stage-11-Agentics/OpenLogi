@@ -303,8 +303,8 @@ impl Armed {
                     RingTrigger::Pressed(device_key) => {
                         running.begin_action_ring(device_key.as_deref()).await;
                     }
-                    RingTrigger::Released(device_key) => {
-                        running.inputs.ring.release_trigger(device_key.as_deref());
+                    RingTrigger::Released { device_key, selects } => {
+                        running.inputs.ring.release_trigger(device_key.as_deref(), selects);
                     }
                 },
                 else => break,
