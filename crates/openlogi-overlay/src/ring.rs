@@ -62,9 +62,11 @@ const READOUT_TEXT: f32 = 10.5;
 
 /// A user-supplied image for a slot with a custom label, drawn in full colour
 /// in place of the built-in glyph: `<config dir>/ring-icons/<label>.svg` or
-/// `.png`, drawn in light ink for a dark cell. On a light cell the ring looks
-/// for `<label>.light.svg` or `.light.png` first, drawn in dark ink. Labels
-/// that could escape that directory are ignored.
+/// `.png`, drawn in light ink for a dark cell. A light cell needs
+/// `<label>.light.svg` or `.light.png`, drawn in dark ink; without one the
+/// slot falls back to its stock glyph, which takes the cell's ink, rather than
+/// draw light ink on a light cell. Labels that could escape that directory are
+/// ignored.
 fn custom_icon_path(
     presentation: &openlogi_ipc::ActionRingPresentation,
     light_cell: bool,
@@ -78,16 +80,14 @@ fn custom_icon_path(
         return None;
     }
     let directory = openlogi_core::paths::config_dir().ok()?.join("ring-icons");
-    let stems = if light_cell {
-        vec![format!("{label}.light"), label.to_string()]
+    let stem = if light_cell {
+        format!("{label}.light")
     } else {
-        vec![label.to_string()]
+        label.to_string()
     };
-    stems
+    ["svg", "png"]
         .iter()
-        .flat_map(|stem| {
-            ["svg", "png"].map(|extension| directory.join(format!("{stem}.{extension}")))
-        })
+        .map(|extension| directory.join(format!("{stem}.{extension}")))
         .find(|candidate| candidate.is_file())
 }
 

@@ -221,6 +221,15 @@ impl ButtonEventHandler {
             ButtonRuntimeEvent::Triggered { press, action } => {
                 self.gestured.insert(press.token().clone());
                 self.start_action(press.token(), &action, press.device_key(), press.target());
+                // Only a ring opened by a plain press can select on release.
+                // A ring this action opened, or one this press opened before
+                // its gesture fired, is not held for a selection, so end its
+                // hold now rather than show it held until the press ends.
+                if matches!(action, Action::ShowActionsRing)
+                    || matches!(press.start_action(), Some(Action::ShowActionsRing))
+                {
+                    self.executor.release_action_ring(press.device_key(), false);
+                }
             }
             ButtonRuntimeEvent::Ended { press, reason } => {
                 self.held.end(press.token());
