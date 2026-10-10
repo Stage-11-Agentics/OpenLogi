@@ -2,6 +2,21 @@
 
 <p align="center"><b><i>more meaning per motion.</i></b></p>
 
+<div align="center">
+<table>
+  <tr>
+    <th>before: upstream OpenLogi 0.8.7</th>
+    <th>after: Stage 11 fork</th>
+  </tr>
+  <tr>
+    <td align="center"><img src="/fork/screenshots/ring-upstream.png" width="334" alt="Before: upstream's ring, round slots on a dark disc"></td>
+    <td align="center"><img src="/fork/screenshots/ring-stage11.png" width="191" alt="After: the fork's ring, a square keypad with a readout"></td>
+  </tr>
+</table>
+</div>
+
+<p align="center"><sub><i>the Actions Ring, the same eight slots before and after. both at real on-screen size, pointer over the top-right slot, rendered from each version's own code.</i></sub></p>
+
 ---
 
 listen.
@@ -22,31 +37,9 @@ built by agents. for working with agents.
 
 not an official OpenLogi release. not affiliated with AprilNEA or Logitech.
 
-## customizations.
-
-| customization | status |
-|---|---|
-| [Actions Ring](#actions-ring) | in daily use |
-
-more will follow. each lands as its own section on this page.
-
 ## actions ring.
 
-the same eight slots, before and after.
-
-<table>
-  <tr>
-    <th>Upstream OpenLogi 0.8.7</th>
-    <th>Stage 11 fork</th>
-  </tr>
-  <tr>
-    <td align="center"><img src="/fork/screenshots/ring-upstream.png" width="334" alt="Upstream ring: round slots on a dark disc"></td>
-    <td align="center"><img src="/fork/screenshots/ring-stage11.png" width="191" alt="Fork ring: a square keypad with a readout"></td>
-  </tr>
-</table>
-
-*both at their real on-screen size, pointer over the top-right slot. rendered
-from each version's own code with the same slot setup.*
+one mouse button, eight actions, chosen in a single motion.
 
 ### press. move. release.
 
