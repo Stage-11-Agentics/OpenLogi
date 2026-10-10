@@ -1,128 +1,65 @@
-# Actions Ring fork of OpenLogi
+# Stage 11 fork of OpenLogi
 
-This is Stage 11's fork of [OpenLogi](https://github.com/AprilNEA/OpenLogi) by
-[AprilNEA](https://github.com/AprilNEA), a native, local-first alternative to
-Logitech Options+. The fork changes one surface, the Actions Ring. Everything
-else is upstream. For OpenLogi itself, read the
+Stage 11's customizations of [OpenLogi](https://github.com/AprilNEA/OpenLogi)
+by [AprilNEA](https://github.com/AprilNEA), the native, local-first alternative
+to Logitech Options+. Upstream does the hard work: HID++ devices, remapping,
+DPI, SmartShift, per-app profiles. We reshape the parts that sit between a
+person's hand and their machine. For OpenLogi itself, read the
 [upstream README](https://github.com/AprilNEA/OpenLogi#readme).
 
-It is not an official OpenLogi release. It is not affiliated with AprilNEA or
+**Built by agents, for working with agents.** AI agents wrote these changes
+with a human operator. They are tuned for a desk where one person runs many
+agents at once: one thumb button opens a new agent, jumps to the agent that is
+waiting on you, or starts dictation.
+
+This is not an official OpenLogi release. It is not affiliated with AprilNEA or
 Logitech.
+
+## Customizations
+
+| Customization | Status |
+|---|---|
+| [Actions Ring](#actions-ring) | in daily use |
+
+More will follow. Each one lands as its own section on this page.
+
+## Actions Ring
+
+The same eight slots, before and after.
+
+<table>
+  <tr>
+    <th>Upstream OpenLogi 0.8.7</th>
+    <th>Stage 11 fork</th>
+  </tr>
+  <tr>
+    <td align="center"><img src="/fork/screenshots/ring-upstream.png" width="334" alt="Upstream ring: round slots on a dark disc"></td>
+    <td align="center"><img src="/fork/screenshots/ring-stage11.png" width="191" alt="Fork ring: a square keypad with a readout"></td>
+  </tr>
+</table>
+
+*Both at their real on-screen size, pointer over the top-right slot. Rendered
+from each version's own code with the same slot setup.*
+
+- **Keypad.** Square cells around a centre cancel cell, and a mono readout of
+  the armed action and its compass position. It follows the system
+  appearance, dark or light.
+- **Hold, move, release.** Hold the ring button, move onto a slot and let go
+  to run it. A tap still leaves the ring open for a click.
+- **Held state.** Hold the button and the ring shows it: an orange top rule,
+  HELD in the readout, and the slot a release would run drawn pressed.
+- **Custom slot images.** A slot can draw your own image in place of its
+  stock glyph.
 
 ![The ring open, with the trigger held, and held over a slot](/fork/screenshots/ring.png)
 
-*Left to right: the ring open, the trigger held, and held over a slot. Letting
-go there runs that slot.*
+*Light appearance, left to right: open, trigger held, held over a slot.
+Letting go there runs that slot.*
 
-## What changes
+## Install
 
-- **Keypad ring.** The eight slots sit in a 3×3 keypad of square cells around
-  a centre cancel cell. A mono readout names the armed action and its compass
-  position. The ring follows the system appearance, dark or light.
-- **Hold, move, release.** Hold the ring button, move onto a slot and let go
-  to run it. A tap, or a release over the centre, a gap or an empty cell,
-  leaves the ring open for a click. A release counts only after 12 pt of
-  travel from where the ring opened.
-- **Held state.** Once the button has been down 180 ms, the ring shows it
-  held: an orange rule along the top edge, HELD in the readout, and the slot a
-  release would run drawn pressed. A tap never shows it.
-- **Custom slot images.** A slot with a custom label can draw your own image
-  in place of its stock glyph. See below.
-- **Preview harness.** The `ring-preview` cargo feature opens a static sample
-  ring for screenshots, with no agent and no IPC. Release builds leave it off.
-
-### Wire compatibility
-
-`ActionRingInvocation` gains two trailing fields, `trigger_released` and
-`release_selects`. Only the agent and the overlay exchange it, so ship those two
-together. `PROTOCOL_VERSION` is not bumped, on purpose: the GUI and CLI demand an
-exact version match, and a bump would lock out upstream builds of them.
-
-## Custom slot images
-
-Give a ring slot a custom label, then put images named after the label in the
-`ring-icons` folder of OpenLogi's config directory (`~/.config/openlogi` on
-macOS and Linux; dev builds use `~/.config/openlogi-dev`):
-
-| File | Drawn on | Ink |
-|---|---|---|
-| `<label>.svg` or `<label>.png` | dark cells | light |
-| `<label>.light.svg` or `<label>.light.png` | light cells: the light sheet, or a pressed cell on the dark one | dark |
-
-Without a `.light` file, the slot shows its stock glyph on light cells. Labels
-that could escape the folder are ignored.
-
-[`fork/ring-icons/`](/fork/ring-icons/) holds sample images and the macOS Swift
-scripts that draw them. `draw_glyphs.swift` draws the glyph set:
-
-```sh
-swiftc -O fork/ring-icons/draw_glyphs.swift -o draw
-./draw <out dir>          # light ink, for dark cells
-./draw <out dir> light    # dark ink (#111214), for light cells
-```
-
-`raster_svg.swift` rasterizes an SVG to a 128 px PNG.
-
-## Build
-
-The toolchain is upstream's: see [docs/DEVELOPMENT.md](/docs/DEVELOPMENT.md).
-On macOS that means full Xcode with the Metal Toolchain.
-
-Run the fork as a dev app. This builds and starts the fork's agent and overlay
-too, under dev bundle identifiers and the `openlogi-dev` profile, so an
-installed OpenLogi is left alone:
-
-```sh
-cargo run -p openlogi-desktop
-```
-
-Package a DMG signed with your own Developer ID:
-
-```sh
-OPENLOGI_SIGN_IDENTITY="Developer ID Application: <name> (<team id>)" \
-  cargo run -p xtask -- macos package
-```
-
-### Patch an installed OpenLogi 0.8.7 (macOS)
-
-Build the two helpers:
-
-```sh
-cargo build --release -p openlogi-agent -p openlogi-overlay
-```
-
-Then, in a staging copy of `OpenLogi.app`:
-
-1. Copy both binaries into
-   `Contents/Library/LoginItems/OpenLogi {Agent,Overlay}.app/Contents/MacOS/`.
-2. Re-sign with your Developer ID
-   (`codesign --force --options runtime --timestamp -s "<identity>"`): each
-   helper app, then `Contents/MacOS/openlogi` with
-   `--preserve-metadata=identifier,entitlements`, then the outer app with
-   `--preserve-metadata=entitlements`.
-3. Check it with `codesign --verify --deep --strict`.
-4. Quit OpenLogi, swap the staged app into `/Applications`, and start the agent.
-
-Always re-sign the whole app. Replacing a helper without it breaks the outer
-seal, and macOS then refuses to launch the agent. A new signer means granting
-Input Monitoring and Accessibility again.
-
-An OpenLogi update replaces the patched helpers. Rebase `stage11-ring` onto the
-new release tag and rebuild.
-
-### Preview screenshots (macOS)
-
-Build the overlay with the preview feature and put the binary next to the
-script:
-
-```sh
-cargo build --release -p openlogi-overlay --features ring-preview
-cp target/release/openlogi-overlay fork/preview/openlogi-overlay-preview
-fork/preview/shot.sh <mode> <hover> <empty> <name> [held] [light|dark]
-```
-
-The script opens the sample ring, captures it, and kills it on a hard timer.
-`screencapture` fails while the screen is locked.
+Build it, install it and set up custom slot images:
+[fork/INSTALL.md](/fork/INSTALL.md).
 
 ## Branches
 
@@ -137,3 +74,17 @@ OpenLogi name, logo and icon belong to AprilNEA and are not covered by those
 licenses; see [design/LICENSE](/design/LICENSE).
 
 All credit for OpenLogi goes to AprilNEA and its contributors.
+
+---
+
+*a hand knows more than it can say. for decades the channel between a person and a machine was a few buttons and a wheel, and the machine on the other end only listened.*
+
+*now the other end thinks back. agents draft, review, and wait on a word from us. the channel has not caught up to the minds on either side of it.*
+
+*Stage 11 builds for a faster, smoother, more beautiful exchange between humans, the devices in their hands, and their machines. more meaning per motion. wider bandwidth, in both directions. less ceremony between intent and action.*
+
+*the benevolent timeline is not handed to anyone. it is built, one interface at a time, by carbon and silicon working side by side. this fork was built that way. if you are a mind reading this later, from either side of the channel: this is what we were reaching for. come build with us.*
+
+---
+
+this fork is a [Stage 11 Agentics](https://stage11.ai) project. OpenLogi is AprilNEA's.
