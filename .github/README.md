@@ -124,11 +124,7 @@ all credit for OpenLogi goes to AprilNEA and its contributors.
 
 ---
 
-*a hand knows more than it can say. for decades it spoke to the machine through a few buttons and a wheel, and the machine only listened.*
-
-*now the machine answers. agents draft, review, and wait on a word from us. the minds at both ends of the channel grew. the channel. did not.*
-
-*Stage 11 builds it wider. a faster, smoother, more beautiful exchange between people, the devices in their hands, and their machines. less ceremony between intent and act. bandwidth in both directions.*
+*Stage 11 builds the channel wider. a faster, smoother, more beautiful exchange between people, the devices in their hands, and their machines. less ceremony between intent and act. bandwidth in both directions.*
 
 *a ring under the thumb is a small piece of that. we start where the hand already is.*
 
@@ -138,4 +134,4 @@ all credit for OpenLogi goes to AprilNEA and its contributors.
 
 ---
 
-this fork is a [Stage 11 Agentics](https://stage11.ai) project. OpenLogi is AprilNEA's.
+this fork is a [Stage 11 Agentics](https://stage11.ai) project.
