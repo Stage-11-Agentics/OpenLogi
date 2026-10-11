@@ -366,7 +366,7 @@ impl Orchestrator {
         }
     }
 
-    /// Every enabled device that binds the left-to-right rocker for `app`,
+    /// Every enabled device that binds the right-to-left rocker for `app`,
     /// keyed by the HID identity of its own connection. A device behind a
     /// receiver is left out: the OS attributes its clicks to the receiver,
     /// which cannot tell its paired devices apart.
@@ -385,7 +385,7 @@ impl Orchestrator {
                 let binding = self
                     .config
                     .effective_bindings(&device.config_key, app)
-                    .remove(&ButtonId::RockerLeftRight)?;
+                    .remove(&ButtonId::RockerRightLeft)?;
                 rocker_binding_enabled(&binding).then(|| RockerTarget {
                     vendor_id: u32::from(vendor_id),
                     product_id: u32::from(product_id),

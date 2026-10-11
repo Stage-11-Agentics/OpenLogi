@@ -528,7 +528,7 @@ fn a_bound_rocker_is_accepted_and_attributed_to_the_mouse_that_made_it() {
     let hooks = rocker_maps(Action::ShowActionsRing.into());
     assert_eq!(
         handle_button(
-            ButtonId::RockerLeftRight,
+            ButtonId::RockerRightLeft,
             true,
             Some(&mx_master_4()),
             &hooks,
@@ -548,7 +548,7 @@ fn a_bound_rocker_is_accepted_and_attributed_to_the_mouse_that_made_it() {
     // The tap hands over the up edge without a device; it pairs by button.
     assert_eq!(
         handle_button(
-            ButtonId::RockerLeftRight,
+            ButtonId::RockerRightLeft,
             false,
             None,
             &hooks,
@@ -581,7 +581,7 @@ fn the_rocker_declines_for_any_other_source_and_leaves_its_release_alone() {
     for device in [None, Some(&other_mouse)] {
         assert_eq!(
             handle_button(
-                ButtonId::RockerLeftRight,
+                ButtonId::RockerRightLeft,
                 true,
                 device,
                 &hooks,
@@ -592,7 +592,7 @@ fn the_rocker_declines_for_any_other_source_and_leaves_its_release_alone() {
         );
         assert_eq!(
             handle_button(
-                ButtonId::RockerLeftRight,
+                ButtonId::RockerRightLeft,
                 false,
                 None,
                 &hooks,
@@ -612,7 +612,7 @@ fn a_rocker_bound_to_nothing_stays_off() {
     let hooks = rocker_maps(Action::None.into());
     assert_eq!(
         handle_button(
-            ButtonId::RockerLeftRight,
+            ButtonId::RockerRightLeft,
             true,
             Some(&mx_master_4()),
             &hooks,
@@ -633,7 +633,7 @@ fn a_lost_rocker_release_cancels_its_press_and_nothing_else() {
     let hooks = rocker_maps(Action::ShowActionsRing.into());
     assert_eq!(
         handle_button(
-            ButtonId::RockerLeftRight,
+            ButtonId::RockerRightLeft,
             true,
             Some(&mx_master_4()),
             &hooks,
@@ -649,7 +649,7 @@ fn a_lost_rocker_release_cancels_its_press_and_nothing_else() {
     };
 
     assert_eq!(
-        handle_lost_button(ButtonId::RockerLeftRight, &dispatcher),
+        handle_lost_button(ButtonId::RockerRightLeft, &dispatcher),
         EventDisposition::PassThrough
     );
     let ButtonRuntimeEvent::Ended {
@@ -665,7 +665,7 @@ fn a_lost_rocker_release_cancels_its_press_and_nothing_else() {
     // A late release of the lost chord is no longer the rocker's to swallow.
     assert_eq!(
         handle_button(
-            ButtonId::RockerLeftRight,
+            ButtonId::RockerRightLeft,
             false,
             None,
             &hooks,
@@ -676,6 +676,32 @@ fn a_lost_rocker_release_cancels_its_press_and_nothing_else() {
     );
     assert!(events.recv_timeout(Duration::from_millis(50)).is_err());
     assert!(owner.shutdown());
+}
+
+#[test]
+fn only_a_device_with_a_bound_rocker_has_its_right_press_held_back() {
+    let bound = rocker_maps(Action::ShowActionsRing.into());
+    let other_mouse = EventDevice {
+        product_id: Some(0xb03e),
+        ..mx_master_4()
+    };
+    assert_eq!(
+        handle_rocker_query(Some(&mx_master_4()), &bound),
+        EventDisposition::Suppress
+    );
+    assert_eq!(
+        handle_rocker_query(Some(&other_mouse), &bound),
+        EventDisposition::PassThrough
+    );
+    assert_eq!(
+        handle_rocker_query(None, &bound),
+        EventDisposition::PassThrough
+    );
+    let off = rocker_maps(Action::None.into());
+    assert_eq!(
+        handle_rocker_query(Some(&mx_master_4()), &off),
+        EventDisposition::PassThrough
+    );
 }
 
 #[test]

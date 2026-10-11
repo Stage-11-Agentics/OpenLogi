@@ -73,7 +73,7 @@ pub(super) fn translate_key(etype: CGEventType, event: &CGEvent) -> Option<KeyEv
 
 /// Convert a `CGEvent` to our [`MouseEvent`] vocabulary. Returns `None`
 /// for event types we don't translate (e.g. unknown buttons). The
-/// [`ButtonId::RockerLeftRight`] edges never come from here: the rocker is a
+/// [`ButtonId::RockerRightLeft`] edges never come from here: the rocker is a
 /// chord, read in `rocker_tap` before an event reaches this translation.
 pub(super) fn translate(etype: CGEventType, event: &CGEvent) -> Option<MouseEvent> {
     // Skip events OpenLogi itself synthesised, so a remapped click or inverted

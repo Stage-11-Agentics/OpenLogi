@@ -178,7 +178,7 @@ pub(crate) struct ActivePress {
     target: ActionDispatchTarget,
     /// Config key of the device an OS-hook press was matched to. An OS-hook
     /// source is a callback thread, not a device, so a press the hook could
-    /// attribute (the left-to-right rocker) carries its device here. HID++
+    /// attribute (the right-to-left rocker) carries its device here. HID++
     /// presses take theirs from the session instead.
     attributed_device: Option<Arc<str>>,
 }

@@ -94,7 +94,9 @@ impl EventMonitor {
                 }
             }
             MouseEvent::CaptureInterrupted => MonitorEvent::CaptureInterrupted,
-            MouseEvent::Moved { .. } | MouseEvent::ButtonLost { .. } => return,
+            MouseEvent::Moved { .. }
+            | MouseEvent::ButtonLost { .. }
+            | MouseEvent::RockerQuery { .. } => return,
         };
         // `try_lock` only — the freeze-sensitive hook callback must never block
         // on the monitor buffer (a contended `lock` stalls every pointer event).

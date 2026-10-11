@@ -48,13 +48,13 @@ pub struct HookMaps {
     /// Entries survive map rebuilds because they are hardware observations,
     /// not configuration.
     pub(crate) thumbwheel_positive_is_forward: BTreeMap<String, bool>,
-    /// Every device with a [`ButtonId::RockerLeftRight`] binding, across all
+    /// Every device with a [`ButtonId::RockerRightLeft`] binding, across all
     /// devices rather than only the selected one: the rocker is matched to
     /// the mouse that produced the chord.
     pub(crate) rocker: Vec<RockerTarget>,
 }
 
-/// One device whose left-to-right rocker is bound, matched by the HID
+/// One device whose right-to-left rocker is bound, matched by the HID
 /// identity the OS attributes its button events to.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct RockerTarget {
@@ -201,7 +201,7 @@ thread_local! {
     /// Thread-local rather than a shared `Mutex` keeps the hot path lock-free and
     /// free of cross-thread contention on the freeze-sensitive callback.
     static HOLD: RefCell<HoldState> = RefCell::new(HoldState::default());
-    /// The accepted left-to-right rocker press, so a lost release can end
+    /// The accepted right-to-left rocker press, so a lost release can end
     /// exactly that lifecycle (see [`MouseEvent::ButtonLost`]).
     static ROCKER_PRESS: RefCell<Option<PressToken>> = const { RefCell::new(None) };
     /// Accepted non-gesture presses retain their edge disposition even when
@@ -278,7 +278,7 @@ fn handle_button(
     dispatcher: &ActionDispatcher,
     capture_target: impl FnOnce() -> ActionDispatchTarget,
 ) -> EventDisposition {
-    if id == ButtonId::RockerLeftRight {
+    if id == ButtonId::RockerRightLeft {
         return handle_rocker(pressed, device, hooks, dispatcher, capture_target);
     }
     // Primary L/R always pass through (suppressing them would brick the mouse).
@@ -354,10 +354,10 @@ fn handle_button(
     SUPPRESSED_PRESSES.with_borrow_mut(|s| remapped_press_disposition(id, queued, s))
 }
 
-/// The left-to-right rocker's edges, offered by the macOS tap. The down edge
+/// The right-to-left rocker's edges, offered by the macOS tap. The down edge
 /// is accepted (`Suppress`) only when the chord came from a device whose
 /// rocker is bound and the press was queued; anything else declines, and the
-/// tap leaves the secondary click untouched. The press is attributed to the
+/// tap replays the right press it held back, so the clicks reach the app. The press is attributed to the
 /// device that made the chord, so it opens that device's ring exactly as a
 /// bound button press would, and its release runs the same release path.
 fn handle_rocker(
@@ -367,7 +367,7 @@ fn handle_rocker(
     dispatcher: &ActionDispatcher,
     capture_target: impl FnOnce() -> ActionDispatchTarget,
 ) -> EventDisposition {
-    let id = ButtonId::RockerLeftRight;
+    let id = ButtonId::RockerRightLeft;
     if !pressed {
         ROCKER_PRESS.with_borrow_mut(Option::take);
         let disposition =
@@ -377,39 +377,58 @@ fn handle_rocker(
         }
         return disposition;
     }
-    // `try_read` only, as everywhere on the tap thread. Fail open: an
-    // unavailable map declines the rocker and the right click goes through.
-    let target = device.and_then(|device| {
-        hooks.try_read().ok().and_then(|maps| {
-            maps.rocker
-                .iter()
-                .find(|rocker| rocker.matches(device))
-                .filter(|rocker| rocker_binding_enabled(&rocker.binding))
-                .map(|rocker| {
-                    (
-                        Arc::clone(&rocker.device_key),
-                        rocker.binding.clone(),
-                        maps.pointer_target,
-                    )
-                })
-        })
+    let target = rocker_target(device, hooks, |rocker, maps| {
+        (
+            Arc::clone(&rocker.device_key),
+            rocker.binding.clone(),
+            maps.pointer_target,
+        )
     });
     let Some((device_key, binding, pointer_target)) = target else {
         return SUPPRESSED_PRESSES.with_borrow_mut(|s| remapped_press_disposition(id, false, s));
     };
     let action_target = pointer_target.map_or_else(capture_target, ActionDispatchTarget::Pointer);
-    info!(device = %device_key, action = %binding.click_action().label(), "left-right rocker → handling binding");
+    info!(device = %device_key, action = %binding.click_action().label(), "right-left rocker → handling binding");
     let press = dispatcher.try_hook_button_down_for_device(id, &binding, action_target, device_key);
     let queued = press.is_some();
     ROCKER_PRESS.with_borrow_mut(|held| *held = press);
     SUPPRESSED_PRESSES.with_borrow_mut(|s| remapped_press_disposition(id, queued, s))
 }
 
+/// The bound rocker of the device behind `device`, read through `read`.
+/// `try_read` only, as everywhere on the tap thread: an unavailable map
+/// reads as no rocker, so the right click goes through.
+fn rocker_target<T>(
+    device: Option<&EventDevice>,
+    hooks: &SharedHookMaps,
+    read: impl FnOnce(&RockerTarget, &HookMaps) -> T,
+) -> Option<T> {
+    let device = device?;
+    let maps = hooks.try_read().ok()?;
+    let rocker = maps
+        .rocker
+        .iter()
+        .find(|rocker| rocker.matches(device))
+        .filter(|rocker| rocker_binding_enabled(&rocker.binding))?;
+    Some(read(rocker, &maps))
+}
+
+/// Whether the tap may hold this right press back as a possible rocker:
+/// only when the device that made it has its rocker bound. Every other right
+/// press reaches the app at once, untouched.
+fn handle_rocker_query(device: Option<&EventDevice>, hooks: &SharedHookMaps) -> EventDisposition {
+    if rocker_target(device, hooks, |_, _| ()).is_some() {
+        EventDisposition::Suppress
+    } else {
+        EventDisposition::PassThrough
+    }
+}
+
 /// The hook lost the release of an accepted press. End exactly that
 /// lifecycle, as canceled: no release, so a ring it opened selects nothing,
 /// while every other hold (a gesture, a held key) carries on untouched.
 fn handle_lost_button(id: ButtonId, dispatcher: &ActionDispatcher) -> EventDisposition {
-    if id == ButtonId::RockerLeftRight
+    if id == ButtonId::RockerRightLeft
         && let Some(press) = ROCKER_PRESS.with_borrow_mut(Option::take)
     {
         info!(button = %id, "button release lost — canceling its lifecycle");
@@ -576,6 +595,7 @@ pub fn start(
                     handle_moved(delta_x, delta_y, &hooks, &dispatcher)
                 }
                 MouseEvent::ButtonLost { id } => handle_lost_button(id, &dispatcher),
+                MouseEvent::RockerQuery { device } => handle_rocker_query(device.as_ref(), &hooks),
                 MouseEvent::CaptureInterrupted => {
                     ROCKER_PRESS.with_borrow_mut(Option::take);
                     HOLD.with_borrow_mut(HoldState::cancel);

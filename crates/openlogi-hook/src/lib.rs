@@ -143,9 +143,10 @@ pub enum MouseEvent {
     /// A mouse button was pressed or released.
     Button {
         /// Which button. On macOS this can also be the virtual
-        /// [`ButtonId::RockerLeftRight`]: the tap offers its down edge when the
-        /// secondary button goes down while the primary is held, and treats a
-        /// [`EventDisposition::Suppress`] answer as accepting the rocker.
+        /// [`ButtonId::RockerRightLeft`]: the tap offers its down edge when the
+        /// primary (left) button goes down while a secondary press it held
+        /// back is still down, and treats a [`EventDisposition::Suppress`]
+        /// answer as accepting the rocker.
         id: ButtonId,
         /// `true` = button down; `false` = button up.
         pressed: bool,
@@ -190,11 +191,21 @@ pub enum MouseEvent {
     /// The hook lost the release of one accepted press and will never deliver
     /// it: end that press's lifecycle without a release, and nothing else.
     /// Narrower than [`Self::CaptureInterrupted`], which ends every hold.
-    /// Emitted on macOS for [`ButtonId::RockerLeftRight`] when its chord
+    /// Emitted on macOS for [`ButtonId::RockerRightLeft`] when its chord
     /// proves an edge went missing.
     ButtonLost {
         /// The press whose release was lost.
         id: ButtonId,
+    },
+    /// macOS only: a secondary (right) press arrived. May the hook hold it
+    /// back as the start of a [`ButtonId::RockerRightLeft`] chord?
+    /// [`EventDisposition::Suppress`] means yes: the press is held until a
+    /// primary press makes it a rocker, or is replayed unchanged when the
+    /// right comes back up or drags away. [`EventDisposition::PassThrough`]
+    /// (any device without a bound rocker) lets it through at once.
+    RockerQuery {
+        /// Best-effort physical source of the secondary press.
+        device: Option<EventDevice>,
     },
 }
 
@@ -682,7 +693,7 @@ pub fn cursor_position() -> Option<CursorPosition> {
 #[cfg(target_os = "macos")]
 mod macos;
 
-// The left-to-right rocker chord. Pure state; only the macOS tap applies it.
+// The right-to-left rocker chord. Pure state; only the macOS tap applies it.
 #[cfg(target_os = "macos")]
 mod rocker;
 

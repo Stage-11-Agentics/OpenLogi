@@ -164,7 +164,7 @@ fn windows_exe_selector_ignores_non_exe_identifiers() {
     assert!(!cfg.has_app_override("2b042", "com.microsoft.VSCode"));
 }
 
-/// The left-to-right rocker is a binding like any other: written by hand in
+/// The right-to-left rocker is a binding like any other: written by hand in
 /// `config.toml`, overridable per app, and absent (off) by default.
 #[test]
 fn rocker_binding_round_trips_and_overlays_per_app() {
@@ -173,37 +173,37 @@ schema_version = 7
 
 [devices."serial:mxmaster4test".bindings]
 Forward = "ShowActionsRing"
-RockerLeftRight = "ShowActionsRing"
+RockerRightLeft = "ShowActionsRing"
 
 [devices."serial:mxmaster4test".per_app_bindings."com.example.Game"]
-RockerLeftRight = "None"
+RockerRightLeft = "None"
 "#;
     let cfg: Config = toml::from_str(body).expect("rocker binding must parse");
     let key = "serial:mxmaster4test";
     assert_eq!(
         cfg.effective_bindings(key, None)
-            .get(&ButtonId::RockerLeftRight),
+            .get(&ButtonId::RockerRightLeft),
         Some(&Binding::Single(Action::ShowActionsRing))
     );
     assert_eq!(
         cfg.effective_bindings(key, Some("com.example.Game"))
-            .get(&ButtonId::RockerLeftRight),
+            .get(&ButtonId::RockerRightLeft),
         Some(&Binding::Single(Action::None))
     );
     let reread = write_and_read(&cfg);
     assert_eq!(
         reread
             .effective_bindings(key, None)
-            .get(&ButtonId::RockerLeftRight),
+            .get(&ButtonId::RockerRightLeft),
         Some(&Binding::Single(Action::ShowActionsRing))
     );
 
     // Unbound by default, and never seeded as a hotspot.
-    assert!(!ButtonId::ALL.contains(&ButtonId::RockerLeftRight));
-    assert_eq!(default_binding(ButtonId::RockerLeftRight), Action::None);
+    assert!(!ButtonId::ALL.contains(&ButtonId::RockerRightLeft));
+    assert_eq!(default_binding(ButtonId::RockerRightLeft), Action::None);
     assert!(
         !Config::default()
             .effective_bindings(key, None)
-            .contains_key(&ButtonId::RockerLeftRight)
+            .contains_key(&ButtonId::RockerRightLeft)
     );
 }

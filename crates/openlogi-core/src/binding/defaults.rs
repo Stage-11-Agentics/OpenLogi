@@ -90,7 +90,7 @@ pub fn default_binding(button: ButtonId) -> Action {
             reason = "the rocker is off by default because it is opt-in, not because a \
                       firmware function stays native like the keyboard arm above"
         )]
-        ButtonId::RockerLeftRight => Action::None,
+        ButtonId::RockerRightLeft => Action::None,
     }
 }
 

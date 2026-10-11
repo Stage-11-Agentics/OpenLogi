@@ -74,17 +74,18 @@ pub enum ButtonId {
     /// Logi metadata slot `SLOT_NAME_RIGHT_SCROLL_BUTTON`. Counterpart to
     /// [`ButtonId::WheelTiltLeft`].
     WheelTiltRight,
-    /// The left-to-right rocker: a virtual control, not a physical one. While
-    /// the primary button is held, pressing the secondary button presses this
-    /// control, and releasing the primary releases it. The macOS hook detects
-    /// the chord, hands the app a primary release in place of the secondary
-    /// press, and swallows the rest of the chord. Unbound (the default), the
-    /// hook never intercepts anything. Kept out of [`ButtonId::ALL`]: there
+    /// The right-to-left rocker: a virtual control, not a physical one. While
+    /// the secondary (right) button is held, pressing the primary (left)
+    /// presses this control, and releasing the secondary releases it. The
+    /// macOS hook holds a right press back until it knows whether a chord
+    /// follows: the chord is swallowed whole, and anything else replays the
+    /// right press as it was. Unbound (the default), the hook holds nothing
+    /// back. Kept out of [`ButtonId::ALL`]: there
     /// is no hotspot to draw, so it is configured in `config.toml` only.
     ///
     /// Declared last: the TOML config and any serialized form encode the
     /// variant identifier / index, so new buttons are append-only.
-    RockerLeftRight,
+    RockerRightLeft,
 }
 
 impl ButtonId {
@@ -196,7 +197,7 @@ impl ButtonId {
             ButtonId::KeyVolumeDown => "Volume Down Key",
             ButtonId::KeyVolumeUp => "Volume Up Key",
             ButtonId::HapticPanel => "Haptic Panel",
-            ButtonId::RockerLeftRight => "Left-Right Rocker",
+            ButtonId::RockerRightLeft => "Right-Left Rocker",
         }
     }
 
@@ -226,7 +227,7 @@ impl ButtonId {
             ButtonId::KeyVolumeDown => "keyboard.volume_down_key",
             ButtonId::KeyVolumeUp => "keyboard.volume_up_key",
             ButtonId::HapticPanel => "actions.haptic_panel",
-            ButtonId::RockerLeftRight => "actions.rocker_left_right",
+            ButtonId::RockerRightLeft => "actions.rocker_right_left",
         }
     }
 }

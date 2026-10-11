@@ -360,7 +360,7 @@ impl ActionDispatcher {
 
     /// Queue one OS-hook down edge attributed to the device `device_key`, so
     /// its actions (an Actions Ring above all) run for that device rather
-    /// than the selected one. Used by the left-to-right rocker, which the
+    /// than the selected one. Used by the right-to-left rocker, which the
     /// hook matches to the mouse that made the chord.
     pub(crate) fn try_hook_button_down_for_device(
         &self,
@@ -594,14 +594,14 @@ mod tests {
         assert!(
             dispatcher
                 .try_hook_button_down_for_device(
-                    ButtonId::RockerLeftRight,
+                    ButtonId::RockerRightLeft,
                     &Action::ShowActionsRing.into(),
                     ActionDispatchTarget::Keyboard,
                     Arc::clone(&device),
                 )
                 .is_some()
         );
-        assert!(dispatcher.try_hook_button_up(ButtonId::RockerLeftRight));
+        assert!(dispatcher.try_hook_button_up(ButtonId::RockerRightLeft));
 
         // The worker runs on its own thread; give it a bounded moment.
         let mut next = || {

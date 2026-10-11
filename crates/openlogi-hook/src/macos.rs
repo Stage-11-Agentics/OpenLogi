@@ -30,7 +30,6 @@ use objc2_app_kit::NSWorkspace;
 use objc2_application_services::{AXIsProcessTrusted, AXIsProcessTrustedWithOptions};
 use tracing::{debug, error, warn};
 
-use crate::rocker::Rocker;
 use crate::{
     CursorPosition, EventDisposition, EventTapInfo, ForegroundApp, HookBackend, HookError,
     HookEvent, TapLocation,
@@ -38,6 +37,7 @@ use crate::{
 pub use foreground::ForegroundApplicationObserver;
 use foreground::observe_frontmost_application;
 pub(crate) use foreground::{frontmost_safari_pid, watch_frontmost_application_activations};
+use rocker_tap::TapRocker;
 use translate::{translate, translate_key};
 use watchdog::{
     CallbackActivity, LifecycleDecision, LifecycleExitReason, LifecycleObservation,
@@ -561,15 +561,15 @@ fn thread_main(
         let callback_signals = Arc::clone(&signals);
         let callback_activity = Arc::clone(&callback_activity);
         let tap_disabled = Arc::clone(&tap_disabled);
-        // The left-to-right rocker's state. Owned by this closure, so only
+        // The right-to-left rocker's state. Owned by this closure, so only
         // the tap thread ever touches it: no lock on the hot path.
-        let rocker = RefCell::new(Rocker::default());
+        let rocker = RefCell::new(TapRocker::default());
         CGEventTap::new(
             CGEventTapLocation::HID,
             CGEventTapPlacement::HeadInsertEventTap,
             CGEventTapOptions::Default,
             hooked_event_types(),
-            move |_proxy: CGEventTapProxy, etype: CGEventType, event: &CGEvent| {
+            move |proxy: CGEventTapProxy, etype: CGEventType, event: &CGEvent| {
                 if matches!(
                     etype,
                     CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput
@@ -577,7 +577,10 @@ fn thread_main(
                     tap_disabled.store(true, Ordering::Release);
                 }
                 callback_activity.enter(callback_signals.now_millis());
-                let disposition = rocker_tap::tap_event(cb.as_ref(), &rocker, etype, event);
+                // A replayed press goes back into the stream just past this
+                // tap, so the tap never sees it again.
+                let post = |replayed: &CGEvent| replayed.post_from_tap(proxy);
+                let disposition = rocker_tap::tap_event(cb.as_ref(), &post, &rocker, etype, event);
                 callback_activity.exit();
                 disposition
             },
