@@ -83,6 +83,14 @@ pub fn default_binding(button: ButtonId) -> Action {
         | ButtonId::KeyMute
         | ButtonId::KeyVolumeDown
         | ButtonId::KeyVolumeUp => Action::None,
+        // A virtual chord, not a physical control: unbound means the hook
+        // never intercepts a right press made while the left is held.
+        #[expect(
+            clippy::match_same_arms,
+            reason = "the rocker is off by default because it is opt-in, not because a \
+                      firmware function stays native like the keyboard arm above"
+        )]
+        ButtonId::RockerLeftRight => Action::None,
     }
 }
 

@@ -358,6 +358,21 @@ impl ActionDispatcher {
             .try_hook_down_with_target(button, binding, target)
     }
 
+    /// Queue one OS-hook down edge attributed to the device `device_key`, so
+    /// its actions (an Actions Ring above all) run for that device rather
+    /// than the selected one. Used by the left-to-right rocker, which the
+    /// hook matches to the mouse that made the chord.
+    pub(crate) fn try_hook_button_down_for_device(
+        &self,
+        button: ButtonId,
+        binding: &Binding,
+        target: ActionDispatchTarget,
+        device_key: Arc<str>,
+    ) -> Option<PressToken> {
+        self.buttons
+            .try_hook_down_for_device(button, binding, target, device_key)
+    }
+
     /// Queue one OS-hook up edge without blocking the callback.
     pub(crate) fn try_hook_button_up(&self, button: ButtonId) -> bool {
         self.buttons.try_hook_up(button)
@@ -553,6 +568,63 @@ mod tests {
     use super::*;
 
     static BROWSER_NAV_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    /// The rocker reuses the ordinary press and release path: an attributed
+    /// OS-hook press bound to Show Actions Ring opens that device's ring, and
+    /// its release asks the ring to select, exactly like a bound button.
+    #[test]
+    fn an_attributed_hook_press_opens_and_releases_its_devices_ring() {
+        use crate::action_ring::RingTrigger;
+
+        let (ring_tx, mut ring_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut runtime = ActionRuntime::new(
+            Arc::new(RwLock::new(crate::DpiCycles::default())),
+            crate::hardware::DeviceAccess {
+                channel: Arc::new(RwLock::new(None)),
+                registry: openlogi_hid::ChannelRegistry::default(),
+                receiver_access: crate::receiver_access::ReceiverAccess::default(),
+                device_io: openlogi_hid::device_io_channel().1,
+            },
+            ring_tx,
+        )
+        .expect("runtime should start");
+        let dispatcher = runtime.dispatcher();
+        let device: Arc<str> = Arc::from("serial:mxmaster4test");
+
+        assert!(
+            dispatcher
+                .try_hook_button_down_for_device(
+                    ButtonId::RockerLeftRight,
+                    &Action::ShowActionsRing.into(),
+                    ActionDispatchTarget::Keyboard,
+                    Arc::clone(&device),
+                )
+                .is_some()
+        );
+        assert!(dispatcher.try_hook_button_up(ButtonId::RockerLeftRight));
+
+        // The worker runs on its own thread; give it a bounded moment.
+        let mut next = || {
+            let deadline = Instant::now() + Duration::from_secs(1);
+            loop {
+                if let Ok(trigger) = ring_rx.try_recv() {
+                    return trigger;
+                }
+                assert!(Instant::now() < deadline, "no ring trigger arrived");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        };
+        assert_eq!(next(), RingTrigger::Pressed(Some(device.to_string())));
+        assert_eq!(
+            next(),
+            RingTrigger::Released {
+                device_key: Some(device.to_string()),
+                selects: true,
+            }
+        );
+        runtime.shutdown();
+    }
+
     #[test]
     fn instantaneous_actions_do_not_enter_held_state() {
         let press = PressToken::hook_for_test(1, ButtonId::Back);

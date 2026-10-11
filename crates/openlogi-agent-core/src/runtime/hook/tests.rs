@@ -495,3 +495,141 @@ fn resolve_gesture_click_falls_back_when_click_is_absent() {
         default_binding(ButtonId::Forward)
     );
 }
+
+const MX_MASTER_4: &str = "serial:mxmaster4test";
+
+fn mx_master_4() -> EventDevice {
+    EventDevice {
+        vendor_id: Some(0x046d),
+        product_id: Some(0xb042),
+        product_name: Some("MX Master 4".into()),
+    }
+}
+
+fn rocker_maps(binding: Binding) -> SharedHookMaps {
+    Arc::new(RwLock::new(HookMaps {
+        // The selected device's own maps never decide the rocker.
+        bindings: BTreeMap::from([(ButtonId::Forward, Action::MouseForward.into())]),
+        rocker: vec![RockerTarget {
+            vendor_id: 0x046d,
+            product_id: 0xb042,
+            device_key: Arc::from(MX_MASTER_4),
+            binding,
+        }],
+        ..HookMaps::default()
+    }))
+}
+
+#[test]
+fn a_bound_rocker_is_accepted_and_attributed_to_the_mouse_that_made_it() {
+    use super::super::button::{ButtonRuntimeEvent, EndReason};
+
+    let (dispatcher, mut owner, events) = test_dispatcher();
+    let hooks = rocker_maps(Action::ShowActionsRing.into());
+    assert_eq!(
+        handle_button(
+            ButtonId::RockerLeftRight,
+            true,
+            Some(&mx_master_4()),
+            &hooks,
+            &dispatcher,
+            || ActionDispatchTarget::Keyboard,
+        ),
+        EventDisposition::Suppress
+    );
+    let ButtonRuntimeEvent::Started(press) =
+        events.recv_timeout(Duration::from_secs(1)).expect("down")
+    else {
+        panic!("started");
+    };
+    assert_eq!(press.device_key(), Some(MX_MASTER_4));
+    assert_eq!(press.start_action(), Some(&Action::ShowActionsRing));
+
+    // The tap hands over the up edge without a device; it pairs by button.
+    assert_eq!(
+        handle_button(
+            ButtonId::RockerLeftRight,
+            false,
+            None,
+            &hooks,
+            &dispatcher,
+            || panic!("release does not retarget"),
+        ),
+        EventDisposition::Suppress
+    );
+    let ButtonRuntimeEvent::Ended {
+        press: ended,
+        reason,
+    } = events.recv_timeout(Duration::from_secs(1)).expect("up")
+    else {
+        panic!("ended");
+    };
+    assert_eq!(ended.token(), press.token());
+    assert_eq!(ended.device_key(), Some(MX_MASTER_4));
+    assert_eq!(reason, EndReason::Released);
+    assert!(owner.shutdown());
+}
+
+#[test]
+fn the_rocker_declines_for_any_other_source_and_leaves_its_release_alone() {
+    let (dispatcher, mut owner, events) = test_dispatcher();
+    let hooks = rocker_maps(Action::ShowActionsRing.into());
+    let other_mouse = EventDevice {
+        product_id: Some(0xb03e),
+        ..mx_master_4()
+    };
+    for device in [None, Some(&other_mouse)] {
+        assert_eq!(
+            handle_button(
+                ButtonId::RockerLeftRight,
+                true,
+                device,
+                &hooks,
+                &dispatcher,
+                || panic!("a declined rocker captures no target"),
+            ),
+            EventDisposition::PassThrough
+        );
+        assert_eq!(
+            handle_button(
+                ButtonId::RockerLeftRight,
+                false,
+                None,
+                &hooks,
+                &dispatcher,
+                || panic!("release does not retarget"),
+            ),
+            EventDisposition::PassThrough
+        );
+    }
+    assert!(events.recv_timeout(Duration::from_millis(50)).is_err());
+    assert!(owner.shutdown());
+}
+
+#[test]
+fn a_rocker_bound_to_nothing_stays_off() {
+    let (dispatcher, mut owner, events) = test_dispatcher();
+    let hooks = rocker_maps(Action::None.into());
+    assert_eq!(
+        handle_button(
+            ButtonId::RockerLeftRight,
+            true,
+            Some(&mx_master_4()),
+            &hooks,
+            &dispatcher,
+            || panic!("a declined rocker captures no target"),
+        ),
+        EventDisposition::PassThrough
+    );
+    assert!(events.recv_timeout(Duration::from_millis(50)).is_err());
+    assert!(owner.shutdown());
+}
+
+#[test]
+fn rocker_bindings_are_enabled_unless_they_do_nothing() {
+    assert!(rocker_binding_enabled(&Action::ShowActionsRing.into()));
+    assert!(!rocker_binding_enabled(&Action::None.into()));
+    assert!(rocker_binding_enabled(&Binding::LongPress(
+        LongPressBinding::new(Action::None, Action::ShowActionsRing)
+    )));
+}

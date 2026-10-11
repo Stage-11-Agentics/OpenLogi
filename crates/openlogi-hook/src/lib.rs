@@ -142,7 +142,10 @@ pub enum HookEvent {
 pub enum MouseEvent {
     /// A mouse button was pressed or released.
     Button {
-        /// Which button.
+        /// Which button. On macOS this can also be the virtual
+        /// [`ButtonId::RockerLeftRight`]: the tap offers its down edge when the
+        /// secondary button goes down while the primary is held, and treats a
+        /// [`EventDisposition::Suppress`] answer as accepting the rocker.
         id: ButtonId,
         /// `true` = button down; `false` = button up.
         pressed: bool,
@@ -669,6 +672,10 @@ pub fn cursor_position() -> Option<CursorPosition> {
 
 #[cfg(target_os = "macos")]
 mod macos;
+
+// The left-to-right rocker chord. Pure state; only the macOS tap applies it.
+#[cfg(target_os = "macos")]
+mod rocker;
 
 #[cfg(target_os = "linux")]
 mod linux;

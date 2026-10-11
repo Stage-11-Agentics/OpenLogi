@@ -8,6 +8,7 @@ use super::*;
 
 fn hook_press(id: u64, button: ButtonId) -> ActivePress {
     ActivePress {
+        attributed_device: None,
         token: PressToken::hook_for_test(id, button),
         behavior: PressBehavior::Immediate(Action::Copy),
         target: ActionDispatchTarget::Keyboard,
@@ -60,6 +61,7 @@ fn cancellation_is_scoped_to_one_session() {
     let first_source = ButtonSource::Hidpp(HidppSessionId::with_epoch("mouse-a", 7));
     let second_source = ButtonSource::Hidpp(HidppSessionId::with_epoch("mouse-b", 3));
     let first = ActivePress {
+        attributed_device: None,
         token: PressToken {
             id: PressId(1),
             key: PressKey::new(first_source.clone(), ButtonId::Back),
@@ -69,6 +71,7 @@ fn cancellation_is_scoped_to_one_session() {
         target: ActionDispatchTarget::Keyboard,
     };
     let second = ActivePress {
+        attributed_device: None,
         token: PressToken {
             id: PressId(2),
             key: PressKey::new(second_source, ButtonId::Back),
@@ -89,6 +92,7 @@ fn hook_cancellation_leaves_hidpp_presses_active() {
     let mut state = ButtonState::default();
     let hook = hook_press(1, ButtonId::Back);
     let hidpp = ActivePress {
+        attributed_device: None,
         token: PressToken {
             id: PressId(2),
             key: PressKey::new(
@@ -173,6 +177,7 @@ fn hook_actions_retain_the_press_time_target_across_focus_changes() {
     assert!(matches!(
         recv_event(&received),
         ButtonRuntimeEvent::Started(ActivePress {
+            attributed_device: None,
             target: ActionDispatchTarget::Keyboard,
             ..
         })
@@ -441,6 +446,7 @@ fn release_before_long_press_threshold_fires_only_the_short_action() {
     let mut state = ButtonState::default();
     let pressed_at = Instant::now();
     let press = ActivePress {
+        attributed_device: None,
         token: PressToken::hook_for_test(1, ButtonId::Back),
         behavior: PressBehavior::new(Some(&binding), pressed_at),
         target: ActionDispatchTarget::Keyboard,
@@ -480,6 +486,7 @@ fn threshold_fires_long_once_and_suppresses_short_on_release() {
     let mut state = ButtonState::default();
     let pressed_at = Instant::now();
     let press = ActivePress {
+        attributed_device: None,
         token: PressToken::hook_for_test(1, ButtonId::Back),
         behavior: PressBehavior::new(Some(&binding), pressed_at),
         target: ActionDispatchTarget::Keyboard,
@@ -529,6 +536,7 @@ fn cancellation_never_fires_a_pending_short_or_long_action() {
     let mut state = ButtonState::default();
     let pressed_at = Instant::now();
     let press = ActivePress {
+        attributed_device: None,
         token: PressToken::hook_for_test(1, ButtonId::Back),
         behavior: PressBehavior::new(Some(&binding), pressed_at),
         target: ActionDispatchTarget::Keyboard,
@@ -643,6 +651,7 @@ fn overdue_long_press_precedes_unrelated_queued_actions() {
         .expect("test process should have run beyond the long-press threshold");
     let mut state = ButtonState::default();
     let press = ActivePress {
+        attributed_device: None,
         token: PressToken::hook_for_test(1, ButtonId::Back),
         behavior: PressBehavior::new(Some(&binding), pressed_at),
         target: ActionDispatchTarget::Keyboard,
@@ -705,6 +714,7 @@ fn continuous_commands_cannot_starve_a_long_press_deadline() {
         .send(ButtonCommand::Input {
             generation: 0,
             input: ButtonInput::Down(ActivePress {
+                attributed_device: None,
                 token: PressToken::hook_for_test(1, ButtonId::Back),
                 behavior: PressBehavior::new(Some(&binding), pressed_at),
                 target: ActionDispatchTarget::Keyboard,

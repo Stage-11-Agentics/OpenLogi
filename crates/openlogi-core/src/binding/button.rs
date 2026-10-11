@@ -73,10 +73,18 @@ pub enum ButtonId {
     /// Tilting the main wheel right — `0x1b04` CID `0x005d` ("Right Scroll"),
     /// Logi metadata slot `SLOT_NAME_RIGHT_SCROLL_BUTTON`. Counterpart to
     /// [`ButtonId::WheelTiltLeft`].
+    WheelTiltRight,
+    /// The left-to-right rocker: a virtual control, not a physical one. While
+    /// the primary button is held, pressing the secondary button presses this
+    /// control, and releasing the primary releases it. The macOS hook detects
+    /// the chord, hands the app a primary release in place of the secondary
+    /// press, and swallows the rest of the chord. Unbound (the default), the
+    /// hook never intercepts anything. Kept out of [`ButtonId::ALL`]: there
+    /// is no hotspot to draw, so it is configured in `config.toml` only.
     ///
     /// Declared last: the TOML config and any serialized form encode the
     /// variant identifier / index, so new buttons are append-only.
-    WheelTiltRight,
+    RockerLeftRight,
 }
 
 impl ButtonId {
@@ -188,6 +196,7 @@ impl ButtonId {
             ButtonId::KeyVolumeDown => "Volume Down Key",
             ButtonId::KeyVolumeUp => "Volume Up Key",
             ButtonId::HapticPanel => "Haptic Panel",
+            ButtonId::RockerLeftRight => "Left-Right Rocker",
         }
     }
 
@@ -217,6 +226,7 @@ impl ButtonId {
             ButtonId::KeyVolumeDown => "keyboard.volume_down_key",
             ButtonId::KeyVolumeUp => "keyboard.volume_up_key",
             ButtonId::HapticPanel => "actions.haptic_panel",
+            ButtonId::RockerLeftRight => "actions.rocker_left_right",
         }
     }
 }

@@ -6,10 +6,12 @@
 
 mod foreground;
 pub(crate) mod pointer;
+mod rocker_tap;
 mod sender;
 mod translate;
 mod watchdog;
 
+use std::cell::RefCell;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
@@ -28,6 +30,7 @@ use objc2_app_kit::NSWorkspace;
 use objc2_application_services::{AXIsProcessTrusted, AXIsProcessTrustedWithOptions};
 use tracing::{debug, error, warn};
 
+use crate::rocker::Rocker;
 use crate::{
     CursorPosition, EventDisposition, EventTapInfo, ForegroundApp, HookBackend, HookError,
     HookEvent, TapLocation,
@@ -341,6 +344,17 @@ fn run_tap_callback(
     }
 }
 
+/// Hand the user callback an event the tap composed itself (a rocker edge, a
+/// lost-edge cancellation) under the same `catch_unwind` as
+/// [`run_tap_callback`]. A panic reads as [`EventDisposition::PassThrough`],
+/// which declines a rocker and so leaves the physical event untouched.
+fn deliver(cb: &dyn Fn(HookEvent) -> EventDisposition, event: HookEvent) -> EventDisposition {
+    catch_unwind(AssertUnwindSafe(|| cb(event))).unwrap_or_else(|_| {
+        error!("OS mouse-hook callback panicked on a composed event — declining it");
+        EventDisposition::PassThrough
+    })
+}
+
 /// Sibling watchdog: if the callback is still entered past the budget, abort
 /// the agent so macOS tears the tap down and system input recovers.
 fn spawn_callback_watchdog(
@@ -547,6 +561,9 @@ fn thread_main(
         let callback_signals = Arc::clone(&signals);
         let callback_activity = Arc::clone(&callback_activity);
         let tap_disabled = Arc::clone(&tap_disabled);
+        // The left-to-right rocker's state. Owned by this closure, so only
+        // the tap thread ever touches it: no lock on the hot path.
+        let rocker = RefCell::new(Rocker::default());
         CGEventTap::new(
             CGEventTapLocation::HID,
             CGEventTapPlacement::HeadInsertEventTap,
@@ -560,7 +577,7 @@ fn thread_main(
                     tap_disabled.store(true, Ordering::Release);
                 }
                 callback_activity.enter(callback_signals.now_millis());
-                let disposition = run_tap_callback(cb.as_ref(), etype, event);
+                let disposition = rocker_tap::tap_event(cb.as_ref(), &rocker, etype, event);
                 callback_activity.exit();
                 disposition
             },

@@ -48,6 +48,36 @@ pub struct HookMaps {
     /// Entries survive map rebuilds because they are hardware observations,
     /// not configuration.
     pub(crate) thumbwheel_positive_is_forward: BTreeMap<String, bool>,
+    /// Every device with a [`ButtonId::RockerLeftRight`] binding, across all
+    /// devices rather than only the selected one: the rocker is matched to
+    /// the mouse that produced the chord.
+    pub(crate) rocker: Vec<RockerTarget>,
+}
+
+/// One device whose left-to-right rocker is bound, matched by the HID
+/// identity the OS attributes its button events to.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct RockerTarget {
+    /// HID vendor id of the device's own connection (Bluetooth or USB).
+    pub(crate) vendor_id: u32,
+    /// HID product id of the device's own connection.
+    pub(crate) product_id: u32,
+    /// Config key of the device, so the press opens that device's ring.
+    pub(crate) device_key: Arc<str>,
+    /// The rocker's effective binding for the current app.
+    pub(crate) binding: Binding,
+}
+
+impl RockerTarget {
+    fn matches(&self, device: &EventDevice) -> bool {
+        device.vendor_id == Some(self.vendor_id) && device.product_id == Some(self.product_id)
+    }
+}
+
+/// Whether a rocker binding does anything. Unbound and `None` both leave the
+/// secondary click alone.
+pub(crate) fn rocker_binding_enabled(binding: &Binding) -> bool {
+    matches!(binding, Binding::LongPress(_)) || binding.click_action() != Action::None
 }
 
 /// Shared, atomically-published [`HookMaps`], threaded between the config owner
@@ -245,6 +275,9 @@ fn handle_button(
     dispatcher: &ActionDispatcher,
     capture_target: impl FnOnce() -> ActionDispatchTarget,
 ) -> EventDisposition {
+    if id == ButtonId::RockerLeftRight {
+        return handle_rocker(pressed, device, hooks, dispatcher, capture_target);
+    }
     // Primary L/R always pass through (suppressing them would brick the mouse).
     if !id.is_os_hook_button() || !button_source_may_remap(device) {
         return EventDisposition::PassThrough;
@@ -314,6 +347,56 @@ fn handle_button(
     info!(button = %id, action = %binding.click_action().label(), "button → handling binding");
     let queued = dispatcher
         .try_hook_button_down(id, Some(&binding), action_target)
+        .is_some();
+    SUPPRESSED_PRESSES.with_borrow_mut(|s| remapped_press_disposition(id, queued, s))
+}
+
+/// The left-to-right rocker's edges, offered by the macOS tap. The down edge
+/// is accepted (`Suppress`) only when the chord came from a device whose
+/// rocker is bound and the press was queued; anything else declines, and the
+/// tap leaves the secondary click untouched. The press is attributed to the
+/// device that made the chord, so it opens that device's ring exactly as a
+/// bound button press would, and its release runs the same release path.
+fn handle_rocker(
+    pressed: bool,
+    device: Option<&EventDevice>,
+    hooks: &SharedHookMaps,
+    dispatcher: &ActionDispatcher,
+    capture_target: impl FnOnce() -> ActionDispatchTarget,
+) -> EventDisposition {
+    let id = ButtonId::RockerLeftRight;
+    if !pressed {
+        let disposition =
+            SUPPRESSED_PRESSES.with_borrow_mut(|s| remapped_release_disposition(id, s));
+        if disposition == EventDisposition::Suppress {
+            dispatcher.try_hook_button_up(id);
+        }
+        return disposition;
+    }
+    // `try_read` only, as everywhere on the tap thread. Fail open: an
+    // unavailable map declines the rocker and the right click goes through.
+    let target = device.and_then(|device| {
+        hooks.try_read().ok().and_then(|maps| {
+            maps.rocker
+                .iter()
+                .find(|rocker| rocker.matches(device))
+                .filter(|rocker| rocker_binding_enabled(&rocker.binding))
+                .map(|rocker| {
+                    (
+                        Arc::clone(&rocker.device_key),
+                        rocker.binding.clone(),
+                        maps.pointer_target,
+                    )
+                })
+        })
+    });
+    let Some((device_key, binding, pointer_target)) = target else {
+        return SUPPRESSED_PRESSES.with_borrow_mut(|s| remapped_press_disposition(id, false, s));
+    };
+    let action_target = pointer_target.map_or_else(capture_target, ActionDispatchTarget::Pointer);
+    info!(device = %device_key, action = %binding.click_action().label(), "left-right rocker → handling binding");
+    let queued = dispatcher
+        .try_hook_button_down_for_device(id, &binding, action_target, device_key)
         .is_some();
     SUPPRESSED_PRESSES.with_borrow_mut(|s| remapped_press_disposition(id, queued, s))
 }

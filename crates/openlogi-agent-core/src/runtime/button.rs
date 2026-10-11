@@ -176,6 +176,11 @@ pub(crate) struct ActivePress {
     token: PressToken,
     behavior: PressBehavior,
     target: ActionDispatchTarget,
+    /// Config key of the device an OS-hook press was matched to. An OS-hook
+    /// source is a callback thread, not a device, so a press the hook could
+    /// attribute (the left-to-right rocker) carries its device here. HID++
+    /// presses take theirs from the session instead.
+    attributed_device: Option<Arc<str>>,
 }
 
 /// Runtime-only state of the action semantics attached to one active press.
@@ -253,7 +258,9 @@ impl ActivePress {
     }
 
     pub(crate) fn device_key(&self) -> Option<&str> {
-        self.token.key.source.device_key()
+        self.attributed_device
+            .as_deref()
+            .or_else(|| self.token.key.source.device_key())
     }
 
     pub(crate) fn start_action(&self) -> Option<&Action> {
@@ -455,6 +462,26 @@ impl ButtonInputHandle {
         self.try_down(ButtonSource::current_hook(), button, binding, target)
     }
 
+    pub(crate) fn try_hook_down_for_device(
+        &self,
+        button: ButtonId,
+        binding: &Binding,
+        target: ActionDispatchTarget,
+        device_key: Arc<str>,
+    ) -> Option<PressToken> {
+        let generation = self.generation.load(Ordering::Acquire);
+        let mut press = self.new_press(
+            PressKey::new(ButtonSource::current_hook(), button),
+            PressBehavior::new(Some(binding), Instant::now()),
+            generation,
+            target,
+        );
+        press.attributed_device = Some(device_key);
+        let token = press.token.clone();
+        self.try_input(generation, ButtonInput::Down(press))
+            .then_some(token)
+    }
+
     pub(crate) fn try_hook_up(&self, button: ButtonId) -> bool {
         self.try_up(ButtonSource::current_hook(), button)
     }
@@ -611,6 +638,7 @@ impl ButtonInputHandle {
             },
             behavior,
             target,
+            attributed_device: None,
         }
     }
 

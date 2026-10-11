@@ -27,8 +27,16 @@ fn button_number_to_id(n: i64) -> Option<ButtonId> {
 }
 
 /// Best-effort device identity for a button event's HID sender.
-fn button_source(event: &CGEvent) -> Option<crate::EventDevice> {
+pub(super) fn button_source(event: &CGEvent) -> Option<crate::EventDevice> {
     event_sender_id(event).map(|id| sender_device_info(id).event_device)
+}
+
+/// Whether OpenLogi itself synthesised `event` (a remapped click, an inverted
+/// scroll), so it must not re-enter the hook as physical input. One field
+/// read: call it only for event types OpenLogi posts, never for motion.
+pub(super) fn is_openlogi_synthetic(event: &CGEvent) -> bool {
+    event.get_integer_value_field(EventField::EVENT_SOURCE_USER_DATA)
+        == openlogi_inject::SYNTHETIC_EVENT_USER_DATA
 }
 
 /// Map the macOS modifier flags on a `CGEvent` to our [`KeyModifiers`].
@@ -64,7 +72,9 @@ pub(super) fn translate_key(etype: CGEventType, event: &CGEvent) -> Option<KeyEv
 }
 
 /// Convert a `CGEvent` to our [`MouseEvent`] vocabulary. Returns `None`
-/// for event types we don't translate (e.g. move events, unknown buttons).
+/// for event types we don't translate (e.g. unknown buttons). The
+/// [`ButtonId::RockerLeftRight`] edges never come from here: the rocker is a
+/// chord, read in `rocker_tap` before an event reaches this translation.
 pub(super) fn translate(etype: CGEventType, event: &CGEvent) -> Option<MouseEvent> {
     // Skip events OpenLogi itself synthesised, so a remapped click or inverted
     // scroll we posted doesn't re-enter the hook as real input. Gate the field
@@ -80,10 +90,7 @@ pub(super) fn translate(etype: CGEventType, event: &CGEvent) -> Option<MouseEven
             | CGEventType::OtherMouseUp
             | CGEventType::ScrollWheel
     );
-    if can_be_synthetic
-        && event.get_integer_value_field(EventField::EVENT_SOURCE_USER_DATA)
-            == openlogi_inject::SYNTHETIC_EVENT_USER_DATA
-    {
+    if can_be_synthetic && is_openlogi_synthetic(event) {
         return None;
     }
     match etype {

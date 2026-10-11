@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
 use openlogi_core::app::ForegroundApp;
-use openlogi_core::binding::{Action, Binding};
+use openlogi_core::binding::{Action, Binding, ButtonId};
 use openlogi_core::bindings::{button_bindings_for, oshook_gestures_for};
 use openlogi_core::config::{Config, LightSettings, MouseProfileTarget, canonical_device_key};
 use openlogi_core::device::{
@@ -36,7 +36,7 @@ use crate::capture_plan::{
 use crate::hardware::{DeviceAccess, DeviceOp, HardwareContext, VolatileMouseSettings};
 use crate::observable::ObservableState;
 use crate::receiver_access::ReceiverAccess;
-use crate::runtime::hook::{HookMaps, SharedHookMaps};
+use crate::runtime::hook::{HookMaps, RockerTarget, SharedHookMaps, rocker_binding_enabled};
 use crate::runtime::scroll::ScrollPreferences;
 use crate::watchers::host_switch::{HostSwitchLink, HostSwitchLinks};
 use crate::watchers::keyboard::{KeyboardSpec, SharedKeyboardSpec};
@@ -332,13 +332,19 @@ impl Orchestrator {
     /// so they're built together here and published under one lock — keeping
     /// `rebuild` and `set_current_app` from drifting into a half-populated write.
     fn hook_maps_for(&self, key: Option<&str>) -> HookMaps {
+        let (app, pointer_target) = self.mouse_context();
+        // The rocker is matched per event to the device that made the chord,
+        // so its targets span every device, independent of the selection.
+        let rocker = self.rocker_targets(app);
         // A disabled selected device gets empty maps: the OS hook then passes
         // its events through untouched instead of applying remaps to a device
         // the user asked OpenLogi to leave alone.
         if key.is_some_and(|k| !self.config.device_enabled(k)) {
-            return HookMaps::default();
+            return HookMaps {
+                rocker,
+                ..HookMaps::default()
+            };
         }
-        let (app, pointer_target) = self.mouse_context();
         let mut bindings = button_bindings_for(&self.config, key, app);
         let mut gestures = oshook_gestures_for(&self.config, key, app);
         if let Some(key) = key {
@@ -355,8 +361,39 @@ impl Orchestrator {
             gestures,
             pointer_target,
             selected_device: key.map(str::to_owned),
+            rocker,
             ..HookMaps::default()
         }
+    }
+
+    /// Every enabled device that binds the left-to-right rocker for `app`,
+    /// keyed by the HID identity of its own connection. A device behind a
+    /// receiver is left out: the OS attributes its clicks to the receiver,
+    /// which cannot tell its paired devices apart.
+    fn rocker_targets(&self, app: Option<&str>) -> Vec<RockerTarget> {
+        self.devices
+            .iter()
+            .filter(|device| self.config.device_enabled(&device.config_key))
+            .filter_map(|device| {
+                let Some(DeviceRoute::Direct {
+                    vendor_id,
+                    product_id,
+                }) = device.route
+                else {
+                    return None;
+                };
+                let binding = self
+                    .config
+                    .effective_bindings(&device.config_key, app)
+                    .remove(&ButtonId::RockerLeftRight)?;
+                rocker_binding_enabled(&binding).then(|| RockerTarget {
+                    vendor_id: u32::from(vendor_id),
+                    product_id: u32::from(product_id),
+                    device_key: Arc::from(device.config_key.as_str()),
+                    binding,
+                })
+            })
+            .collect()
     }
 
     /// Publish hook maps while preserving thumb-wheel polarities learned from
