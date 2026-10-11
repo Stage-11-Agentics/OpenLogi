@@ -626,6 +626,59 @@ fn a_rocker_bound_to_nothing_stays_off() {
 }
 
 #[test]
+fn a_lost_rocker_release_cancels_its_press_and_nothing_else() {
+    use super::super::button::{ButtonRuntimeEvent, CancelReason, EndReason};
+
+    let (dispatcher, mut owner, events) = test_dispatcher();
+    let hooks = rocker_maps(Action::ShowActionsRing.into());
+    assert_eq!(
+        handle_button(
+            ButtonId::RockerLeftRight,
+            true,
+            Some(&mx_master_4()),
+            &hooks,
+            &dispatcher,
+            || ActionDispatchTarget::Keyboard,
+        ),
+        EventDisposition::Suppress
+    );
+    let ButtonRuntimeEvent::Started(press) =
+        events.recv_timeout(Duration::from_secs(1)).expect("down")
+    else {
+        panic!("started");
+    };
+
+    assert_eq!(
+        handle_lost_button(ButtonId::RockerLeftRight, &dispatcher),
+        EventDisposition::PassThrough
+    );
+    let ButtonRuntimeEvent::Ended {
+        press: ended,
+        reason,
+    } = events.recv_timeout(Duration::from_secs(1)).expect("cancel")
+    else {
+        panic!("ended");
+    };
+    assert_eq!(ended.token(), press.token());
+    assert_eq!(reason, EndReason::Canceled(CancelReason::StaleHold));
+
+    // A late release of the lost chord is no longer the rocker's to swallow.
+    assert_eq!(
+        handle_button(
+            ButtonId::RockerLeftRight,
+            false,
+            None,
+            &hooks,
+            &dispatcher,
+            || panic!("release does not retarget"),
+        ),
+        EventDisposition::PassThrough
+    );
+    assert!(events.recv_timeout(Duration::from_millis(50)).is_err());
+    assert!(owner.shutdown());
+}
+
+#[test]
 fn rocker_bindings_are_enabled_unless_they_do_nothing() {
     assert!(rocker_binding_enabled(&Action::ShowActionsRing.into()));
     assert!(!rocker_binding_enabled(&Action::None.into()));

@@ -201,6 +201,9 @@ thread_local! {
     /// Thread-local rather than a shared `Mutex` keeps the hot path lock-free and
     /// free of cross-thread contention on the freeze-sensitive callback.
     static HOLD: RefCell<HoldState> = RefCell::new(HoldState::default());
+    /// The accepted left-to-right rocker press, so a lost release can end
+    /// exactly that lifecycle (see [`MouseEvent::ButtonLost`]).
+    static ROCKER_PRESS: RefCell<Option<PressToken>> = const { RefCell::new(None) };
     /// Accepted non-gesture presses retain their edge disposition even when
     /// moving the pointer changes the binding before physical release.
     static SUPPRESSED_PRESSES: RefCell<HashSet<ButtonId>> = RefCell::new(HashSet::new());
@@ -366,6 +369,7 @@ fn handle_rocker(
 ) -> EventDisposition {
     let id = ButtonId::RockerLeftRight;
     if !pressed {
+        ROCKER_PRESS.with_borrow_mut(Option::take);
         let disposition =
             SUPPRESSED_PRESSES.with_borrow_mut(|s| remapped_release_disposition(id, s));
         if disposition == EventDisposition::Suppress {
@@ -395,10 +399,24 @@ fn handle_rocker(
     };
     let action_target = pointer_target.map_or_else(capture_target, ActionDispatchTarget::Pointer);
     info!(device = %device_key, action = %binding.click_action().label(), "left-right rocker → handling binding");
-    let queued = dispatcher
-        .try_hook_button_down_for_device(id, &binding, action_target, device_key)
-        .is_some();
+    let press = dispatcher.try_hook_button_down_for_device(id, &binding, action_target, device_key);
+    let queued = press.is_some();
+    ROCKER_PRESS.with_borrow_mut(|held| *held = press);
     SUPPRESSED_PRESSES.with_borrow_mut(|s| remapped_press_disposition(id, queued, s))
+}
+
+/// The hook lost the release of an accepted press. End exactly that
+/// lifecycle, as canceled: no release, so a ring it opened selects nothing,
+/// while every other hold (a gesture, a held key) carries on untouched.
+fn handle_lost_button(id: ButtonId, dispatcher: &ActionDispatcher) -> EventDisposition {
+    if id == ButtonId::RockerLeftRight
+        && let Some(press) = ROCKER_PRESS.with_borrow_mut(Option::take)
+    {
+        info!(button = %id, "button release lost — canceling its lifecycle");
+        dispatcher.cancel_stale_hook_press(&press);
+    }
+    SUPPRESSED_PRESSES.with_borrow_mut(|s| s.remove(&id));
+    EventDisposition::PassThrough
 }
 
 fn binding_is_native_click(id: ButtonId, binding: &Binding) -> bool {
@@ -557,7 +575,9 @@ pub fn start(
                 MouseEvent::Moved { delta_x, delta_y } => {
                     handle_moved(delta_x, delta_y, &hooks, &dispatcher)
                 }
+                MouseEvent::ButtonLost { id } => handle_lost_button(id, &dispatcher),
                 MouseEvent::CaptureInterrupted => {
+                    ROCKER_PRESS.with_borrow_mut(Option::take);
                     HOLD.with_borrow_mut(HoldState::cancel);
                     HELD_KEYS.with_borrow_mut(HashSet::clear);
                     dispatcher.cancel_hook_thread_buttons();

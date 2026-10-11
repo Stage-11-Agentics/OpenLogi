@@ -9,19 +9,16 @@
 //!
 //! Once accepted, the app must never see the secondary press, and must not
 //! be left mid-drag. So the accepted secondary press is rewritten into the
-//! primary release, at the primary press's location; drags are retyped into
-//! plain moves; and every remaining edge of the chord is swallowed. This
-//! module only decides each step. The platform tap applies it, so the logic
-//! is testable without a single FFI call.
+//! primary release, where the pointer is (that is where any drag the app saw
+//! ended, and moving it would warp the cursor); drags are retyped into plain
+//! moves; and every remaining edge of the chord is swallowed. This module
+//! only decides each step. The platform tap applies it, so the logic is
+//! testable without a single FFI call.
 
 /// The primary press a rocker may grow from: everything needed to write its
 /// release later.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct PrimaryPress {
-    /// Location of the press, in global display points.
-    pub(crate) x: f64,
-    /// Location of the press, in global display points.
-    pub(crate) y: f64,
     /// The press's click count (2 for the second press of a double click).
     pub(crate) click_state: i64,
     /// The press's mouse event number, which its release must repeat.
@@ -67,9 +64,9 @@ pub(crate) enum Step {
     /// Retype the drag into a plain move. The cursor still moves; the app
     /// sees hover, not a drag.
     AsMove,
-    /// The rocker lost a button edge: cancel the consumer's open lifecycle
-    /// (it gets no release, so it selects nothing), then let the event take
-    /// its ordinary path.
+    /// The rocker lost a button edge: cancel the consumer's open rocker
+    /// lifecycle alone (it gets no release, so it selects nothing), then let
+    /// the event take its ordinary path.
     CancelThenPass,
 }
 
@@ -99,11 +96,27 @@ enum State {
 #[derive(Debug, Default)]
 pub(crate) struct Rocker {
     state: State,
+    /// A chord's secondary button is still down after the chord handed the
+    /// primary back to the app (released, then pressed again). The app never
+    /// saw that secondary press, so it must not see its release either.
+    orphan_secondary_up: bool,
 }
 
 impl Rocker {
     /// Advance on one input and say what to do with its event.
     pub(crate) fn step(&mut self, input: Input) -> Step {
+        if !matches!(self.state, State::Rocking(_)) {
+            match input {
+                Input::SecondaryUp if self.orphan_secondary_up => {
+                    self.orphan_secondary_up = false;
+                    return Step::Swallow;
+                }
+                // A move with no button held, or a new secondary press,
+                // proves the orphaned secondary is up.
+                Input::Moved | Input::SecondaryDown { .. } => self.orphan_secondary_up = false,
+                _ => {}
+            }
+        }
         match self.state {
             State::Idle => {
                 if let Input::PrimaryDown(press) = input {
@@ -118,18 +131,17 @@ impl Rocker {
                     self.state = State::PrimaryHeld(press);
                     Step::Pass
                 }
-                // A move with no button held proves the primary is up.
-                Input::PrimaryUp | Input::Moved => {
+                // A move with no button held proves the primary is up. After
+                // an interruption its release may have been lost, so stop
+                // trusting the hold: a missed rocker beats a phantom one.
+                Input::PrimaryUp | Input::Moved | Input::Interrupted => {
                     self.state = State::Idle;
                     Step::Pass
                 }
                 // A chord on one mouse only: a trackpad press held under a
                 // mouse's right click is not a rocker.
                 Input::SecondaryDown { sender } if sender == held.sender => Step::Offer(held),
-                Input::SecondaryDown { .. }
-                | Input::SecondaryUp
-                | Input::Dragged
-                | Input::Interrupted => Step::Pass,
+                Input::SecondaryDown { .. } | Input::SecondaryUp | Input::Dragged => Step::Pass,
             },
             State::Rocking(chord) => self.step_rocking(input, chord),
         }
@@ -161,16 +173,23 @@ impl Rocker {
                 Step::Swallow
             }
             Input::Dragged => Step::AsMove,
-            // A move with no button held, or a fresh primary press: a release
-            // was lost (the tap was interrupted, or the OS dropped it). The
-            // app already has its primary release, so nothing is stuck; end
-            // the rocker, and cancel its lifecycle if it is still open.
+            // A move with no button held: a release was lost (the tap was
+            // interrupted, or the OS dropped it). The app already has its
+            // primary release, so nothing is stuck; end the rocker, and
+            // cancel its lifecycle if it is still open.
             Input::Moved => {
                 self.state = State::Idle;
                 Self::lost_edge(open)
             }
+            // A fresh primary press. With the primary still down, its release
+            // was lost: cancel as above. With the primary already released
+            // (the lifecycle closed), it is a new press made while the
+            // secondary is still held. Either way the press belongs to the
+            // app now, and a secondary still down stays the chord's to
+            // swallow.
             Input::PrimaryDown(press) => {
                 self.state = State::PrimaryHeld(press);
+                self.orphan_secondary_up = secondary_down;
                 Self::lost_edge(open)
             }
             // The consumer cancels its own lifecycle on an interruption, so
@@ -231,8 +250,6 @@ mod tests {
 
     fn press(sender: Option<u64>) -> PrimaryPress {
         PrimaryPress {
-            x: 100.0,
-            y: 200.0,
             click_state: 1,
             event_number: 41,
             sender,
@@ -391,13 +408,67 @@ mod tests {
     fn a_fresh_primary_press_mid_rocker_cancels_and_starts_a_new_candidate() {
         let mut rocker = rocking();
         let next = PrimaryPress {
-            x: 5.0,
+            event_number: 42,
             ..press(MOUSE)
         };
         assert_eq!(rocker.step(Input::PrimaryDown(next)), Step::CancelThenPass);
         assert_eq!(
             rocker.step(Input::SecondaryDown { sender: MOUSE }),
             Step::Offer(next)
+        );
+    }
+
+    #[test]
+    fn a_new_primary_press_while_the_secondary_is_held_is_the_apps_and_the_secondary_stays_hidden()
+    {
+        let mut rocker = rocking();
+        assert_eq!(rocker.step(Input::PrimaryUp), Step::SwallowAndRelease);
+        // The secondary is still down; the primary goes down again. Nothing
+        // was lost, so nothing is canceled, and the press is the app's.
+        let again = PrimaryPress {
+            event_number: 42,
+            ..press(MOUSE)
+        };
+        assert_eq!(rocker.step(Input::PrimaryDown(again)), Step::Pass);
+        assert!(!rocker.is_rocking());
+        // The app's own click, drags included, is untouched...
+        assert_eq!(rocker.step(Input::Dragged), Step::Pass);
+        // ...but the secondary it never saw go down never comes up for it.
+        assert_eq!(rocker.step(Input::SecondaryUp), Step::Swallow);
+        assert_eq!(rocker.step(Input::PrimaryUp), Step::Pass);
+        // From here on everything is ordinary again.
+        assert_eq!(
+            rocker.step(Input::SecondaryDown { sender: MOUSE }),
+            Step::Pass
+        );
+        assert_eq!(rocker.step(Input::SecondaryUp), Step::Pass);
+    }
+
+    #[test]
+    fn an_orphaned_secondary_release_is_forgotten_once_both_buttons_are_proven_up() {
+        let mut rocker = rocking();
+        rocker.step(Input::PrimaryUp);
+        rocker.step(Input::PrimaryDown(press(MOUSE)));
+        rocker.step(Input::PrimaryUp);
+        // The secondary's release was lost; a bare move proves it is up.
+        assert_eq!(rocker.step(Input::Moved), Step::Pass);
+        assert_eq!(
+            rocker.step(Input::SecondaryDown { sender: MOUSE }),
+            Step::Pass
+        );
+        assert_eq!(rocker.step(Input::SecondaryUp), Step::Pass);
+    }
+
+    #[test]
+    fn an_interruption_while_the_primary_is_held_drops_the_candidate() {
+        let mut rocker = Rocker::default();
+        rocker.step(Input::PrimaryDown(press(MOUSE)));
+        // The primary's release may have been lost in the gap: a right click
+        // made now must stay a right click.
+        assert_eq!(rocker.step(Input::Interrupted), Step::Pass);
+        assert_eq!(
+            rocker.step(Input::SecondaryDown { sender: MOUSE }),
+            Step::Pass
         );
     }
 

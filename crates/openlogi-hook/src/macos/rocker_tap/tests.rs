@@ -4,6 +4,7 @@ use std::sync::Mutex;
 
 use core_graphics::event::CGMouseButton;
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+use core_graphics::geometry::CGPoint;
 
 use super::*;
 
@@ -83,8 +84,8 @@ fn an_accepted_rocker_rewrites_the_right_press_into_the_left_release() {
     );
     let at = right.location();
     assert!(
-        (at.x - 10.0).abs() < f64::EPSILON && (at.y - 20.0).abs() < f64::EPSILON,
-        "released where it was pressed, got ({}, {})",
+        (at.x - 13.0).abs() < f64::EPSILON && (at.y - 24.0).abs() < f64::EPSILON,
+        "released where the pointer is, never warped, got ({}, {})",
         at.x,
         at.y
     );
@@ -195,4 +196,35 @@ fn openlogi_synthetic_clicks_never_start_a_chord() {
     tap_event(&cb, &rocker, CGEventType::RightMouseDown, &right);
     assert_eq!(kind(&right), CGEventType::RightMouseDown as u32);
     assert_eq!(*seen.lock().expect("seen"), ["RightClick down"]);
+}
+
+#[test]
+fn a_lost_release_cancels_only_the_rocker_never_every_hold() {
+    let seen = Mutex::new(Vec::new());
+    let cb = |event| record(&seen, true, &event);
+    let rocker = RefCell::new(Rocker::default());
+    left_down(&rocker, &cb);
+    let right = mouse_event(
+        CGEventType::RightMouseDown,
+        13.0,
+        24.0,
+        CGMouseButton::Right,
+    );
+    tap_event(&cb, &rocker, CGEventType::RightMouseDown, &right);
+
+    // Both releases went missing: a bare move proves the buttons are up.
+    let moved = mouse_event(CGEventType::MouseMoved, 20.0, 30.0, CGMouseButton::Left);
+    assert!(matches!(
+        tap_event(&cb, &rocker, CGEventType::MouseMoved, &moved),
+        CallbackResult::Keep
+    ));
+    assert_eq!(
+        *seen.lock().expect("seen"),
+        [
+            "LeftClick down",
+            "RockerLeftRight down",
+            "Mouse(ButtonLost { id: RockerLeftRight })",
+            "moved",
+        ]
+    );
 }

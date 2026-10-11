@@ -187,6 +187,15 @@ pub enum MouseEvent {
     /// stale hold that the next stray pointer move turns into a phantom swipe.
     /// Carries no data and is always passed through.
     CaptureInterrupted,
+    /// The hook lost the release of one accepted press and will never deliver
+    /// it: end that press's lifecycle without a release, and nothing else.
+    /// Narrower than [`Self::CaptureInterrupted`], which ends every hold.
+    /// Emitted on macOS for [`ButtonId::RockerLeftRight`] when its chord
+    /// proves an edge went missing.
+    ButtonLost {
+        /// The press whose release was lost.
+        id: ButtonId,
+    },
 }
 
 /// What the hook callback wants the OS to do with the captured event.

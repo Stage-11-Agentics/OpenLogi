@@ -8,7 +8,6 @@
 use std::cell::RefCell;
 
 use core_graphics::event::{CGEvent, CGEventType, CallbackResult, EventField};
-use core_graphics::geometry::CGPoint;
 
 use super::sender::event_sender_id;
 use super::translate::{button_source, is_openlogi_synthetic};
@@ -34,16 +33,11 @@ fn input(etype: CGEventType, event: &CGEvent) -> Option<Input> {
         {
             return None;
         }
-        CGEventType::LeftMouseDown => {
-            let at = event.location();
-            Input::PrimaryDown(PrimaryPress {
-                x: at.x,
-                y: at.y,
-                click_state: event.get_integer_value_field(EventField::MOUSE_EVENT_CLICK_STATE),
-                event_number: event.get_integer_value_field(EventField::MOUSE_EVENT_NUMBER),
-                sender: event_sender_id(event),
-            })
-        }
+        CGEventType::LeftMouseDown => Input::PrimaryDown(PrimaryPress {
+            click_state: event.get_integer_value_field(EventField::MOUSE_EVENT_CLICK_STATE),
+            event_number: event.get_integer_value_field(EventField::MOUSE_EVENT_NUMBER),
+            sender: event_sender_id(event),
+        }),
         CGEventType::LeftMouseUp => Input::PrimaryUp,
         CGEventType::RightMouseDown => Input::SecondaryDown {
             sender: event_sender_id(event),
@@ -53,16 +47,22 @@ fn input(etype: CGEventType, event: &CGEvent) -> Option<Input> {
     })
 }
 
-/// Turn the accepted secondary press into the release of `press`: same
-/// location, click count and event number, so the app ends the click it
-/// already started instead of seeing a second button.
+/// Turn the accepted secondary press into the release of `press`: same click
+/// count and event number, so the app ends the click it already started
+/// instead of seeing a second button.
+///
+/// The location stays the pointer's own. Most rockers do not move between
+/// the two presses, so that is the press point and the app sees a plain
+/// click. If the pointer did move, the app has already seen the drag to here,
+/// and a release here is the ordinary end of it; moving the release back
+/// would end the drag somewhere it never went, and a HID-level location
+/// rewrite risks warping the cursor under the ring that is about to open.
 fn rewrite_as_primary_release(event: &CGEvent, press: PrimaryPress) {
     event.set_type(CGEventType::LeftMouseUp);
     event.set_integer_value_field(EventField::MOUSE_EVENT_BUTTON_NUMBER, 0);
     event.set_integer_value_field(EventField::MOUSE_EVENT_CLICK_STATE, press.click_state);
     event.set_integer_value_field(EventField::MOUSE_EVENT_NUMBER, press.event_number);
     event.set_double_value_field(EventField::MOUSE_EVENT_PRESSURE, 0.0);
-    event.set_location(CGPoint::new(press.x, press.y));
 }
 
 fn rocker_edge(pressed: bool, device: Option<crate::EventDevice>) -> HookEvent {
@@ -99,21 +99,37 @@ pub(super) fn tap_event(
             run_tap_callback(cb, CGEventType::MouseMoved, event)
         }
         Step::CancelThenPass => {
-            deliver(cb, HookEvent::Mouse(MouseEvent::CaptureInterrupted));
+            deliver(cb, rocker_lost());
             run_tap_callback(cb, etype, event)
         }
         Step::Offer(press) => {
-            if deliver(cb, rocker_edge(true, button_source(event))) == EventDisposition::Suppress {
-                if let Ok(mut rocker) = rocker.try_borrow_mut() {
+            let accepted =
+                deliver(cb, rocker_edge(true, button_source(event))) == EventDisposition::Suppress;
+            // Commit to the rewrite only once the state records the rocker:
+            // a rewrite the state did not know about would leave the chord's
+            // later edges unswallowed and its release never delivered.
+            let recorded = accepted
+                && rocker.try_borrow_mut().is_ok_and(|mut rocker| {
                     rocker.accept();
-                }
+                    true
+                });
+            if recorded {
                 rewrite_as_primary_release(event, press);
                 CallbackResult::Keep
             } else {
+                if accepted {
+                    deliver(cb, rocker_lost());
+                }
                 run_tap_callback(cb, etype, event)
             }
         }
     }
+}
+
+fn rocker_lost() -> HookEvent {
+    HookEvent::Mouse(MouseEvent::ButtonLost {
+        id: ButtonId::RockerLeftRight,
+    })
 }
 
 #[cfg(test)]
