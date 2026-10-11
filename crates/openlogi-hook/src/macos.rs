@@ -37,7 +37,7 @@ use crate::{
 pub use foreground::ForegroundApplicationObserver;
 use foreground::observe_frontmost_application;
 pub(crate) use foreground::{frontmost_safari_pid, watch_frontmost_application_activations};
-use rocker_tap::TapRocker;
+use rocker_tap::{Route, TapRocker};
 use translate::{translate, translate_key};
 use watchdog::{
     CallbackActivity, LifecycleDecision, LifecycleExitReason, LifecycleObservation,
@@ -578,8 +578,11 @@ fn thread_main(
                 }
                 callback_activity.enter(callback_signals.now_millis());
                 // A replayed press goes back into the stream just past this
-                // tap, so the tap never sees it again.
-                let post = |replayed: &CGEvent| replayed.post_from_tap(proxy);
+                // tap, so the tap never sees it again (see `rocker_tap`).
+                let post = |replayed: &CGEvent, route: Route| match route {
+                    Route::AfterTap => replayed.post_from_tap(proxy),
+                    Route::Hid => replayed.post(CGEventTapLocation::HID),
+                };
                 let disposition = rocker_tap::tap_event(cb.as_ref(), &post, &rocker, etype, event);
                 callback_activity.exit();
                 disposition

@@ -58,17 +58,6 @@ pub(crate) enum Input {
     Interrupted,
 }
 
-/// What the tap does with the current event after replaying a held press.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Then {
-    /// Post a copy of the current event after the replay and drop the
-    /// original, so the app sees the two in order.
-    PostCurrent,
-    /// The current event takes its ordinary path; its order relative to the
-    /// replay does not matter (a bare move, an interruption notice).
-    PassCurrent,
-}
-
 /// What the tap does with the event that produced an [`Input`].
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Step {
@@ -81,7 +70,7 @@ pub(crate) enum Step {
     /// A left press while a right press is held back. Offer the rocker's
     /// down edge; if accepted, call [`Rocker::accept`], forget the held copy
     /// and drop the event. If declined, call [`Rocker::decline`] and replay
-    /// as [`Step::Replay`] with `click: false, then: PostCurrent` would.
+    /// as [`Step::Replay`] with `click: false` would.
     Offer,
     /// Drop the event: the app never sees it.
     Swallow,
@@ -90,9 +79,10 @@ pub(crate) enum Step {
     /// Retype the drag into a plain move: the cursor moves, the app sees
     /// hover, not a drag.
     AsMove,
-    /// Replay the held right press (and, with `click`, a release for it),
-    /// then handle the current event as `then` says.
-    Replay { click: bool, then: Then },
+    /// Replay the held right press (and, with `click`, a release for it,
+    /// where the pointer is now). The current event then takes its ordinary
+    /// path, after the replay.
+    Replay { click: bool },
     /// The rocker lost a button edge: cancel the consumer's open rocker
     /// lifecycle alone (no release, so it selects nothing), then let the
     /// event take its ordinary path.
@@ -185,9 +175,9 @@ impl Rocker {
     }
 
     fn step_holding(&mut self, input: Input, held: RightPress) -> Step {
-        let replay = |rocker: &mut Self, click: bool, then: Then| {
+        let replay = |rocker: &mut Self, click: bool| {
             rocker.state = State::Idle;
-            Step::Replay { click, then }
+            Step::Replay { click }
         };
         match input {
             // A chord on one mouse only: a trackpad click under a mouse's
@@ -195,30 +185,28 @@ impl Rocker {
             Input::LeftDown { sender } if sender == held.sender => Step::Offer,
             Input::LeftDown { .. } => {
                 self.left_held = true;
-                replay(self, false, Then::PostCurrent)
+                replay(self, false)
             }
             // The right came back up first: an ordinary right click.
-            Input::RightUp => replay(self, false, Then::PostCurrent),
+            Input::RightUp => replay(self, false),
             Input::Dragged { x, y } => {
                 if (x - held.x).hypot(y - held.y) > DRAG_SLOP {
                     // An ordinary right drag: the app gets the press, then
                     // the drag from where it is now.
-                    replay(self, false, Then::PostCurrent)
+                    replay(self, false)
                 } else {
                     Step::AsMove
                 }
             }
-            // A move with no button held: the right release was lost.
-            // Replay the whole click rather than drop it.
-            Input::Moved => replay(self, true, Then::PassCurrent),
-            // A second right press: the first one's release was lost. Replay
-            // it as a click; the new press then reaches the app as it is.
-            Input::RightDown(_) => replay(self, true, Then::PostCurrent),
+            // A move with no button held, or a second right press: the held
+            // press's release was lost. Replay the whole click rather than
+            // drop it; a new press then reaches the app as it is.
+            Input::Moved | Input::RightDown(_) => replay(self, true),
             // The release may be lost in the gap, or still to come. Replay
             // the click now, and swallow a release that arrives later.
             Input::Interrupted => {
                 self.orphan_right_up = true;
-                replay(self, true, Then::PassCurrent)
+                replay(self, true)
             }
             // A left release with no left press since the hold began: a
             // stray, and nothing to do with the held press.
@@ -305,6 +293,11 @@ impl Rocker {
             self.state = State::Idle;
             self.left_held = true;
         }
+    }
+
+    /// Whether nothing is held back and no chord is under way.
+    pub(crate) fn is_idle(&self) -> bool {
+        self.state == State::Idle
     }
 
     /// Whether a right press is held back.

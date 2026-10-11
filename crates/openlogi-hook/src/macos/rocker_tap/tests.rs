@@ -85,11 +85,14 @@ impl Harness {
         };
         let event = mouse_event(etype, x, y, button);
         let cb = |event| self.consumer(&event);
-        let post = |posted: &CGEvent| {
+        // A posted event enters the system before the event the callback
+        // returns, so the app log puts posts first.
+        let post = |posted: &CGEvent, route: Route| {
             assert!(
                 is_openlogi_synthetic(posted),
                 "every posted event is marked"
             );
+            assert_eq!(route, Route::AfterTap, "only an interruption posts at HID");
             let label = name(kind(posted)).to_owned();
             self.posted.lock().expect("posted").push(label.clone());
             self.app.lock().expect("app").push(label);
@@ -159,7 +162,7 @@ fn a_right_click_alone_is_replayed_in_order() {
     h.run(CGEventType::RightMouseDragged, 11.0, 20.0);
     assert!(matches!(
         h.run(CGEventType::RightMouseUp, 11.0, 20.0),
-        CallbackResult::Drop
+        CallbackResult::Keep
     ));
     assert_eq!(h.app(), ["moved", "right down", "right up"]);
 }
@@ -228,12 +231,13 @@ fn a_declined_offer_replays_the_right_press_before_the_left() {
     };
     let left = mouse_event(CGEventType::LeftMouseDown, 10.0, 20.0, CGMouseButton::Left);
     let posted = Mutex::new(Vec::new());
-    let post = |event: &CGEvent| posted.lock().expect("posted").push(name(kind(event)));
+    let post = |event: &CGEvent, _: Route| posted.lock().expect("posted").push(name(kind(event)));
+    // The held right press goes first; the left press itself follows.
     assert!(matches!(
         tap_event(&declining, &post, &h.tap, CGEventType::LeftMouseDown, &left),
-        CallbackResult::Drop
+        CallbackResult::Keep
     ));
-    assert_eq!(*posted.lock().expect("posted"), ["right down", "left down"]);
+    assert_eq!(*posted.lock().expect("posted"), ["right down"]);
 }
 
 #[test]
@@ -241,9 +245,10 @@ fn a_lost_release_mid_chord_cancels_only_the_rocker() {
     let h = Harness::new(true);
     h.run(CGEventType::RightMouseDown, 10.0, 20.0);
     h.run(CGEventType::LeftMouseDown, 10.0, 20.0);
-    // Both releases went missing: a bare move proves the buttons are up.
+    // The right went down again: its release was lost. The new press is the
+    // app's; only the rocker's lifecycle is canceled.
     assert!(matches!(
-        h.run(CGEventType::MouseMoved, 20.0, 30.0),
+        h.run(CGEventType::RightMouseDown, 20.0, 30.0),
         CallbackResult::Keep
     ));
     assert_eq!(
@@ -252,7 +257,7 @@ fn a_lost_release_mid_chord_cancels_only_the_rocker() {
             "query",
             "RockerRightLeft down",
             "Mouse(ButtonLost { id: RockerRightLeft })",
-            "moved",
+            "RightClick down",
         ]
     );
 }
@@ -261,8 +266,9 @@ fn a_lost_release_mid_chord_cancels_only_the_rocker() {
 fn a_held_press_whose_release_was_lost_is_replayed_as_a_click() {
     let h = Harness::new(true);
     h.run(CGEventType::RightMouseDown, 10.0, 20.0);
-    h.run(CGEventType::MouseMoved, 20.0, 30.0);
-    assert_eq!(h.app(), ["right down", "right up", "moved"]);
+    // A second press proves the first one's release went missing.
+    h.run(CGEventType::RightMouseDown, 20.0, 30.0);
+    assert_eq!(h.app(), ["right down", "right up", "right down"]);
 }
 
 #[test]
@@ -279,10 +285,58 @@ fn openlogi_synthetic_clicks_never_start_or_join_a_chord() {
         openlogi_inject::SYNTHETIC_EVENT_USER_DATA,
     );
     let cb = |event| h.consumer(&event);
-    let post = |_: &CGEvent| panic!("nothing to replay");
+    let post = |_: &CGEvent, _: Route| panic!("nothing to replay");
     assert!(matches!(
         tap_event(&cb, &post, &h.tap, CGEventType::RightMouseDown, &right),
         CallbackResult::Keep
     ));
     assert!(h.seen().is_empty(), "never queried, never translated");
+}
+
+#[test]
+fn an_interruption_while_holding_replays_a_click_at_the_hid_level() {
+    let h = Harness::new(true);
+    h.run(CGEventType::RightMouseDown, 10.0, 20.0);
+    let notice = mouse_event(CGEventType::MouseMoved, 10.0, 20.0, CGMouseButton::Left);
+    let cb = |event| h.consumer(&event);
+    let posted = Mutex::new(Vec::new());
+    let post = |event: &CGEvent, route: Route| {
+        posted
+            .lock()
+            .expect("posted")
+            .push((name(kind(event)), route));
+    };
+    tap_event(
+        &cb,
+        &post,
+        &h.tap,
+        CGEventType::TapDisabledByTimeout,
+        &notice,
+    );
+    assert_eq!(
+        *posted.lock().expect("posted"),
+        [("right down", Route::Hid), ("right up", Route::Hid)]
+    );
+    // The real release, arriving after the gap, is not handed out twice.
+    assert!(matches!(
+        h.run(CGEventType::RightMouseUp, 10.0, 20.0),
+        CallbackResult::Drop
+    ));
+}
+
+#[test]
+fn a_move_another_program_posted_never_ends_a_held_press() {
+    let h = Harness::new(true);
+    h.run(CGEventType::RightMouseDown, 10.0, 20.0);
+    // A sender-less move (a KVM, a remote-control tool) while held.
+    h.run(CGEventType::MouseMoved, 30.0, 30.0);
+    assert!(
+        h.posted.lock().expect("posted").is_empty(),
+        "nothing replayed"
+    );
+    // The chord still works.
+    assert!(matches!(
+        h.run(CGEventType::LeftMouseDown, 30.0, 30.0),
+        CallbackResult::Drop
+    ));
 }

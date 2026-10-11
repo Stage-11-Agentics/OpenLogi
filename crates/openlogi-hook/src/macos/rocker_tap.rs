@@ -2,23 +2,24 @@
 //! tapped `CGEvent` into a rocker input, and apply the step the rocker names.
 //!
 //! Nothing here waits. A held-back right press is kept as a copy of its
-//! event. A replay posts that copy with `CGEventTapPostEvent`, which inserts
-//! it into the event stream just past this tap, so the tap never sees it
-//! again, and the call returns at once. When the replay must come before the
-//! current event, the current event is posted as a copy right after it and
-//! the original is dropped: two posts from one thread keep their order,
-//! which returning the original alongside a post would not promise. Every
-//! posted event also carries OpenLogi's synthetic marker.
+//! event. A replay posts that copy with `CGEventTapPostEvent`, which returns
+//! at once and inserts it just past this tap, so the tap never sees it
+//! again; per CoreGraphics, a posted event enters the system before the
+//! event the callback returns, so the current event, returned as it is,
+//! follows the replay. Every posted event carries OpenLogi's synthetic
+//! marker.
 
 use std::cell::RefCell;
 
 use core_graphics::event::{CGEvent, CGEventType, CallbackResult, EventField};
+use core_graphics::geometry::CGPoint;
 use foreign_types_shared::ForeignType as _;
+use tracing::warn;
 
 use super::sender::event_sender_id;
 use super::translate::{button_source, is_openlogi_synthetic};
 use super::{deliver, run_tap_callback};
-use crate::rocker::{Input, RightPress, Rocker, Step, Then};
+use crate::rocker::{Input, RightPress, Rocker, Step};
 use crate::{ButtonId, EventDisposition, HookEvent, MouseEvent};
 
 #[link(name = "CoreGraphics", kind = "framework")]
@@ -59,6 +60,17 @@ unsafe impl Send for HeldEvent {}
 pub(super) struct TapRocker {
     rocker: Rocker,
     held: Option<HeldEvent>,
+}
+
+impl Drop for TapRocker {
+    fn drop(&mut self) {
+        // The tap is gone (stopped, or Accessibility revoked) with a right
+        // press held back. It cannot be posted any more; say so. The app is
+        // left with nothing stuck: it never saw the press.
+        if self.held.is_some() {
+            warn!("event tap stopped while holding a right press back — that right click is lost");
+        }
+    }
 }
 
 /// Reduce a tapped event to a rocker input. Only button edges read fields;
@@ -112,58 +124,86 @@ fn rocker_lost() -> HookEvent {
     })
 }
 
-/// Post the held press (and with `click`, a release for it), then deal with
-/// the current event as `then` says. With nothing held, which the state
-/// machine never allows, the current event simply takes its ordinary path.
+/// Where a replayed event is posted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Route {
+    /// `CGEventTapPostEvent` through this tap's proxy: the event enters the
+    /// stream just past the tap, before the event the callback returns.
+    AfterTap,
+    /// `CGEventPost` at the HID level, for the one moment the proxy may not
+    /// serve: the tap-disabled notice. The tap sees the event again, and
+    /// ignores it by its synthetic marker.
+    Hid,
+}
+
+/// Post the held press (and with `click`, a release for it), then let the
+/// current event take its ordinary path, which puts it after the replay.
+/// With nothing held, which the state machine never allows, only the current
+/// event goes through.
+///
+/// The current event always reaches the app here: once its held press is
+/// replayed, it is the app's, and a press the app got must get its release.
 fn replay(
     held: Option<HeldEvent>,
     click: bool,
-    then: Then,
-    post: &dyn Fn(&CGEvent),
+    post: &dyn Fn(&CGEvent, Route),
     cb: &dyn Fn(HookEvent) -> EventDisposition,
     etype: CGEventType,
     event: &CGEvent,
 ) -> CallbackResult {
-    let Some(HeldEvent(down)) = held else {
-        return run_tap_callback(cb, etype, event);
+    let route = if matches!(
+        etype,
+        CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput
+    ) {
+        Route::Hid
+    } else {
+        Route::AfterTap
     };
-    post(&down);
-    if click && let Some(up) = marked_copy(&down) {
-        up.set_type(CGEventType::RightMouseUp);
-        up.set_double_value_field(EventField::MOUSE_EVENT_PRESSURE, 0.0);
-        post(&up);
-    }
-    match then {
-        Then::PassCurrent => run_tap_callback(cb, etype, event),
-        Then::PostCurrent => match marked_copy(event) {
-            Some(current) => {
-                // The agent still sees the current edge (it is the app's now);
-                // the posted copy is the one the app receives, unless the
-                // agent itself suppressed the edge.
-                if matches!(run_tap_callback(cb, etype, event), CallbackResult::Keep) {
-                    post(&current);
-                }
-                CallbackResult::Drop
+    if let Some(HeldEvent(down)) = held {
+        if click {
+            // A whole click recovers a lost edge, when the pointer may be
+            // far from the press: click where it is, so posting at the HID
+            // level never warps it back.
+            if let Some(at) = crate::cursor_position() {
+                down.set_location(CGPoint::new(at.x, at.y));
             }
-            None => run_tap_callback(cb, etype, event),
-        },
+        }
+        post(&down, route);
+        if click && let Some(up) = marked_copy(&down) {
+            up.set_type(CGEventType::RightMouseUp);
+            up.set_double_value_field(EventField::MOUSE_EVENT_PRESSURE, 0.0);
+            post(&up, route);
+        }
     }
+    let _ = run_tap_callback(cb, etype, event);
+    CallbackResult::Keep
+}
+
+/// Whether `input` may move the rocker. A bare move proves every button up
+/// only when a device made it: while a press is held or a chord is under
+/// way, a move another program posted (a KVM, a remote-control tool) must
+/// not end it. Idle, motion costs no FFI call at all.
+fn counts(input: Input, tap: &RefCell<TapRocker>, event: &CGEvent) -> bool {
+    input != Input::Moved
+        || tap.try_borrow().is_ok_and(|tap| tap.rocker.is_idle())
+        || event_sender_id(event).is_some()
 }
 
 /// Run one tapped event through the rocker, then through `cb`. `post`
-/// inserts an event into the stream just past this tap.
+/// puts a replayed event back into the stream.
 ///
 /// The state is borrowed only to step it or to record a decision, never
 /// across a callback. A borrow that cannot be taken (it never can be, short
 /// of a re-entrant tap) leaves the event on its ordinary path.
 pub(super) fn tap_event(
     cb: &dyn Fn(HookEvent) -> EventDisposition,
-    post: &dyn Fn(&CGEvent),
+    post: &dyn Fn(&CGEvent, Route),
     tap: &RefCell<TapRocker>,
     etype: CGEventType,
     event: &CGEvent,
 ) -> CallbackResult {
     let step = input(etype, event)
+        .filter(|input| counts(*input, tap, event))
         .and_then(|input| Some(tap.try_borrow_mut().ok()?.rocker.step(input)))
         .unwrap_or(Step::Pass);
     match step {
@@ -181,12 +221,12 @@ pub(super) fn tap_event(
             deliver(cb, rocker_lost());
             run_tap_callback(cb, etype, event)
         }
-        Step::Replay { click, then } => {
+        Step::Replay { click } => {
             let held = tap
                 .try_borrow_mut()
                 .ok()
                 .and_then(|mut tap| tap.held.take());
-            replay(held, click, then, post, cb, etype, event)
+            replay(held, click, post, cb, etype, event)
         }
         Step::Query(press) => {
             let device = button_source(event);
@@ -223,7 +263,7 @@ pub(super) fn tap_event(
             match decided {
                 // Accepted: the app never sees either press.
                 Some(_) if accepted => CallbackResult::Drop,
-                Some(held) => replay(held, false, Then::PostCurrent, post, cb, etype, event),
+                Some(held) => replay(held, false, post, cb, etype, event),
                 None => {
                     if accepted {
                         deliver(cb, rocker_lost());

@@ -13,10 +13,7 @@ fn right(sender: Option<u64>) -> RightPress {
     }
 }
 
-const REPLAY_THEN_CURRENT: Step = Step::Replay {
-    click: false,
-    then: Then::PostCurrent,
-};
+const REPLAY_THEN_CURRENT: Step = Step::Replay { click: false };
 
 /// A right press the consumer agreed to hold back.
 fn holding() -> Rocker {
@@ -251,13 +248,7 @@ fn a_fresh_right_press_mid_chord_cancels_and_reaches_the_app() {
 #[test]
 fn a_held_press_whose_release_was_lost_is_replayed_as_a_whole_click() {
     let mut rocker = holding();
-    assert_eq!(
-        rocker.step(Input::Moved),
-        Step::Replay {
-            click: true,
-            then: Then::PassCurrent,
-        }
-    );
+    assert_eq!(rocker.step(Input::Moved), Step::Replay { click: true });
     assert!(!rocker.is_holding());
 }
 
@@ -266,10 +257,7 @@ fn a_second_right_press_replays_the_first_as_a_click() {
     let mut rocker = holding();
     assert_eq!(
         rocker.step(Input::RightDown(right(MOUSE))),
-        Step::Replay {
-            click: true,
-            then: Then::PostCurrent,
-        }
+        Step::Replay { click: true }
     );
     // The second press itself reached the app; its release is ordinary.
     assert_eq!(rocker.step(Input::RightUp), Step::Pass);
@@ -280,10 +268,7 @@ fn an_interruption_replays_the_held_press_and_hides_a_late_release() {
     let mut rocker = holding();
     assert_eq!(
         rocker.step(Input::Interrupted),
-        Step::Replay {
-            click: true,
-            then: Then::PassCurrent,
-        }
+        Step::Replay { click: true }
     );
     // The replayed click already ended it: the real release is swallowed.
     assert_eq!(rocker.step(Input::RightUp), Step::Swallow);
