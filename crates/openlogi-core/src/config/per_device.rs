@@ -42,32 +42,43 @@ impl Config {
             .insert(button, binding);
     }
 
-    /// Actions Ring settings for `device_key`, falling back to defaults when
-    /// the device has no saved ring configuration.
+    /// Actions Ring settings for `device_key`: the shared ring when one is
+    /// set, otherwise the device's own, falling back to defaults when the
+    /// device has no saved ring configuration.
     #[must_use]
     pub fn action_ring(&self, device_key: &str) -> ActionRingConfig {
+        if let Some(shared) = &self.action_ring {
+            return shared.clone();
+        }
         self.devices
             .get(device_key)
             .map(|device| device.action_ring.clone())
             .unwrap_or_default()
     }
 
+    /// The ring an edit for `device_key` writes to: the shared ring when one
+    /// is set, otherwise the device's own, creating the device entry if needed.
+    pub fn action_ring_mut(&mut self, device_key: &str) -> &mut ActionRingConfig {
+        match &mut self.action_ring {
+            Some(shared) => shared,
+            None => {
+                &mut self
+                    .devices
+                    .entry(device_key.to_string())
+                    .or_default()
+                    .action_ring
+            }
+        }
+    }
+
     /// Enable or disable `device_key`'s Actions Ring.
     pub fn set_action_ring_enabled(&mut self, device_key: &str, enabled: bool) {
-        self.devices
-            .entry(device_key.to_string())
-            .or_default()
-            .action_ring
-            .enabled = enabled;
+        self.action_ring_mut(device_key).enabled = enabled;
     }
 
     /// Enable or disable ring hover and activation haptics.
     pub fn set_action_ring_haptics(&mut self, device_key: &str, enabled: bool) {
-        self.devices
-            .entry(device_key.to_string())
-            .or_default()
-            .action_ring
-            .haptics = enabled;
+        self.action_ring_mut(device_key).haptics = enabled;
     }
 
     /// Replace or clear one slot in the default Actions Ring layout.
@@ -77,10 +88,7 @@ impl Config {
         slot: ActionRingSlot,
         action: Option<RingAction>,
     ) {
-        self.devices
-            .entry(device_key.to_string())
-            .or_default()
-            .action_ring
+        self.action_ring_mut(device_key)
             .default
             .set_action(slot, action);
     }
@@ -92,10 +100,7 @@ impl Config {
         slot: ActionRingSlot,
         icon: Option<ActionRingIcon>,
     ) {
-        self.devices
-            .entry(device_key.to_string())
-            .or_default()
-            .action_ring
+        self.action_ring_mut(device_key)
             .default
             .set_icon(slot, icon);
     }

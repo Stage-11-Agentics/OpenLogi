@@ -92,7 +92,7 @@ impl AppState {
         };
         let app = self.editing_action_ring_app().map(str::to_string);
         self.config.edit(|config| {
-            let ring = &mut config.devices.entry(key).or_default().action_ring;
+            let ring = config.action_ring_mut(&key);
             let layout = match app {
                 Some(app) => {
                     let inherited = ring.default.clone();
@@ -121,9 +121,7 @@ impl AppState {
             return events;
         };
         self.config.edit(|config| {
-            if let Some(device) = config.devices.get_mut(&key) {
-                device.action_ring.per_app.remove(&app);
-            }
+            config.action_ring_mut(&key).per_app.remove(&app);
         });
         self.action_ring_editing_apps.remove(&key);
         self.persist_and_reload("Actions Ring application profile");

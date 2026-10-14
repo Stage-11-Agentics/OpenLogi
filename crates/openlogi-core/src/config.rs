@@ -11,6 +11,8 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::binding::ActionRingConfig;
+
 mod device;
 #[cfg(feature = "fs")]
 mod file;
@@ -136,6 +138,11 @@ pub struct Config {
     /// `[keyboard]` section loading unchanged.
     #[serde(default)]
     pub keyboard: KeyboardConfig,
+    /// One Actions Ring shared by every device. When set, it stands in for
+    /// each device's own `action_ring`, and ring edits write here, so every
+    /// mouse and trackball opens the same ring. `None` keeps rings per device.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action_ring: Option<ActionRingConfig>,
 }
 
 impl Default for Config {
@@ -147,6 +154,7 @@ impl Default for Config {
             devices: BTreeMap::new(),
             ephemeral: false,
             keyboard: KeyboardConfig::default(),
+            action_ring: None,
         }
     }
 }
